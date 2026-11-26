@@ -1,0 +1,153 @@
+@layer ui-sdk;
+
+@import "tailwindcss";
+@import "tw-animate-css";
+@import "shadcn/tailwind.css";
+@import "@fontsource-variable/inter";
+
+@custom-variant dark (&:is(.dark *));
+
+@theme inline {
+  --font-sans: "Inter Variable", ui-sans-serif, system-ui, sans-serif;
+  --font-mono: ui-monospace, "SF Mono", Menlo, monospace;
+  --color-sidebar: var(--sidebar);
+  --color-sidebar-foreground: var(--sidebar-foreground);
+  --color-sidebar-accent: var(--sidebar-accent);
+  --color-sidebar-border: var(--sidebar-border);
+  --color-ring: var(--ring);
+  --color-input: var(--input);
+  --color-border: var(--border);
+  --color-destructive: var(--destructive);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-foreground: var(--foreground);
+  --color-background: var(--background);
+  --color-hover: var(--hover);
+  --color-selected: var(--selected);
+  --color-group: var(--group);
+  --radius-sm: 4px;
+  --radius-md: 6px;
+  --radius-lg: 8px;
+  --radius-xl: 12px;
+}
+
+/* Linear's surfaces and text tiers, in shadcn's variable names. */
+:root {
+  --sidebar: #f5f5f6;
+  --sidebar-foreground: #282a30;
+  --sidebar-accent: #e9e9eb;
+  --sidebar-border: #e4e2e4;
+  --background: #ffffff;
+  --foreground: #282a30;
+  --card: #ffffff;
+  --card-foreground: #282a30;
+  --popover: #ffffff;
+  --popover-foreground: #282a30;
+  --primary: #5e6ad2;
+  --primary-foreground: #ffffff;
+  --secondary: #f4f2f4;
+  --secondary-foreground: #3c4149;
+  --muted: #f4f4f4;
+  --muted-foreground: #6f6e77;
+  --accent: #efeff1;
+  --accent-foreground: #282a30;
+  --destructive: #d9534f;
+  --border: #e9e8ea;
+  --input: #dcdbdd;
+  --ring: #7170ff;
+  --hover: rgb(0 0 0 / 0.025);
+  --selected: #f1f1ff;
+  --group: #f8f8f9;
+
+  --julius: #2a78d6;
+  --theo: #eb6834;
+  --maintainer: #1baf7a;
+  --vouched: #eda100;
+  --community: #c9c8c4;
+}
+
+.dark {
+  --sidebar: #08090a;
+  --sidebar-foreground: #f7f8f8;
+  --sidebar-accent: #1c1c1f;
+  --sidebar-border: #23252a;
+  --background: #0f1011;
+  --foreground: #f7f8f8;
+  --card: #141516;
+  --card-foreground: #f7f8f8;
+  --popover: #1c1c1f;
+  --popover-foreground: #f7f8f8;
+  --primary: #5e6ad2;
+  --primary-foreground: #ffffff;
+  --secondary: #1c1c1f;
+  --secondary-foreground: #d0d6e0;
+  --muted: #191a1b;
+  --muted-foreground: #8a8f98;
+  --accent: #26262a;
+  --accent-foreground: #f7f8f8;
+  --destructive: #eb5757;
+  --border: #23252a;
+  --input: #34343a;
+  --ring: #7170ff;
+  --hover: rgb(255 255 255 / 0.03);
+  --selected: #1d1e3a;
+  --group: #141516;
+
+  --julius: #3987e5;
+  --theo: #d95926;
+  --maintainer: #199e70;
+  --vouched: #c98500;
+  --community: #4a4944;
+}
+
+@layer base {
+  * {
+    @apply border-border outline-ring/50;
+  }
+  html {
+    @apply font-sans;
+    font-feature-settings: "cv01", "ss03";
+    -webkit-font-smoothing: antialiased;
+  }
+  body {
+    @apply bg-sidebar text-foreground;
+    font-size: 13px;
+  }
+  code {
+    @apply rounded-sm bg-muted px-1 py-px font-mono text-[12px];
+  }
+}
+
+/* GitHub-flavored markdown in the PR panel. */
+.md {
+  font-size: 14px;
+  line-height: 1.6;
+  overflow-wrap: anywhere;
+  color: var(--secondary-foreground);
+}
+.md > :first-child { margin-top: 0; }
+.md h1, .md h2, .md h3, .md h4 { color: var(--foreground); font-size: 14px; font-weight: 590; margin: 20px 0 8px; }
+.md p, .md ul, .md ol, .md pre, .md table, .md blockquote, .md details { margin: 0 0 12px; }
+.md ul, .md ol { padding-left: 20px; }
+.md ul { list-style: disc; }
+.md ol { list-style: decimal; }
+.md ul.contains-task-list { list-style: none; padding-left: 4px; }
+.md a { color: var(--ring); }
+.md pre { background: var(--muted); border-radius: 6px; padding: 10px 12px; overflow: auto; font-size: 12px; }
+.md pre code { background: none; padding: 0; }
+.md blockquote { border-left: 2px solid var(--border); padding-left: 12px; color: var(--muted-foreground); }
+.md img, .md video { max-width: 100%; height: auto; border-radius: 6px; }
+.md table { border-collapse: collapse; display: block; overflow: auto; max-width: 100%; font-size: 13px; }
+.md th, .md td { border: 1px solid var(--border); padding: 4px 8px; }
+.md summary { cursor: pointer; }
+.md hr { border: 0; border-top: 1px solid var(--border); margin: 16px 0; }

@@ -138,3 +138,17 @@ export const SORTERS: Record<SortBy, (a: Pr, b: Pr) => number> = {
   updated: (a, b) => b.updatedAt.localeCompare(a.updatedAt),
   size: (a, b) => b.additions + b.deletions - (a.additions + a.deletions),
 };
+
+export const isActive = (q: string, key: FilterKey, value: string, neg = false) =>
+  parseQuery(q).tokens.some((t) => t.neg === neg && t.key === key && t.value === value.toLowerCase());
+
+/** Flips "is" ↔ "is not" for every value of one filter. */
+export function flipGroup(q: string, key: FilterKey, neg: boolean) {
+  const { tokens, words } = parseQuery(q);
+  return serialize(tokens.map((t) => (t.key === key && t.neg === neg ? { ...t, neg: !neg } : t)), words);
+}
+
+export function removeGroup(q: string, key: FilterKey, neg: boolean) {
+  const { tokens, words } = parseQuery(q);
+  return serialize(tokens.filter((t) => !(t.key === key && t.neg === neg)), words);
+}

@@ -1,6 +1,25 @@
 import { useQuery } from "convex/react";
-import { lazy, memo, Suspense, useDeferredValue, useEffect, useMemo, useRef, useState } from "react";
+import {
+  ArrowUpRightIcon,
+  CalendarIcon,
+  CircleDashedIcon,
+  ListFilterIcon,
+  SearchIcon,
+  ShapesIcon,
+  ShieldCheckIcon,
+  TagIcon,
+  UserIcon,
+  XIcon,
+} from "lucide-react";
+import { lazy, memo, Suspense, useDeferredValue, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { api } from "../convex/_generated/api";
+import { CommandPalette } from "@/components/command-palette";
+import { DisplayMenu } from "@/components/display";
+import { FilterChips, FilterMenu, type Facet } from "@/components/filters";
+import { Button, buttonVariants } from "@/components/ui/button";
+import { Dialog, DialogBackdrop, DialogContent, DialogTitle } from "@/components/ui/dialog";
+import { Badge, Kbd } from "@/components/ui/kbd";
+import { cn } from "@/lib/utils";
 import {
   ALIASES,
   GROUP_LABEL,
@@ -11,10 +30,10 @@ import {
   TIERS,
   WHO,
   WHO_LABEL,
-  hasToken,
+  isActive,
   makeMatcher,
   parseQuery,
-  removeToken,
+  serialize,
   setOnly,
   themeSlug,
   tierOf,
@@ -25,16 +44,16 @@ import {
   type SortBy,
   type Tier,
   type Who,
-} from "./model";
-import { Palette, type Command } from "./Palette";
-import { useRevalidateOnView, useSyncedPrs, type Pr } from "./sync";
+} from "@/model";
+import { useRevalidateOnView, useSyncedPrs, type Pr } from "@/sync";
 
 // The markdown stack is most of the bundle; load it when a PR is first opened.
-const Description = lazy(() => import("./Description").then((m) => ({ default: m.Description })));
+const Description = lazy(() => import("@/Description").then((m) => ({ default: m.Description })));
 
-const REPO_URL = "https://github.com/pingdotgg/t3code";
-const prUrl = (n: number) => `${REPO_URL}/pull/${n}`;
+const prUrl = (n: number) => `https://github.com/pingdotgg/t3code/pull/${n}`;
 const fmt = (n: number) => n.toLocaleString();
+const TIER_LABEL: Record<Tier, string> = { maintainer: "Maintainer", vouched: "Vouched", community: "Unvouched", denounced: "Denounced" };
+const aliasOf = (login: string) => Object.entries(ALIASES).find(([, l]) => l === login.toLowerCase())?.[0];
 
 function ago(ms: number, now: number) {
   const s = Math.max(0, (now - ms) / 1000);
@@ -61,62 +80,103 @@ function readUrl() {
   const pr = Number(p.get("pr"));
   return {
     q: p.get("q") ?? "",
-    group: group && group in GROUP_LABEL ? group : "theme",
-    sort: sort && sort in SORT_LABEL ? sort : "created",
+    group: group && group in GROUP_LABEL ? group : ("theme" as GroupBy),
+    sort: sort && sort in SORT_LABEL ? sort : ("created" as SortBy),
     pr: Number.isFinite(pr) && pr > 0 ? pr : null,
   };
 }
 
-const VIEWS: { label: string; who?: Who; tier?: Tier; author?: string }[] = [
-  { label: "All" },
-  { label: "Julius", who: "julius", author: "julius" },
-  { label: "Theo", who: "theo", author: "theo" },
-  { label: "Maintainers", who: "maintainer", tier: "maintainer" },
-  { label: "Vouched", who: "vouched", tier: "vouched" },
-  { label: "Everyone else", who: "community", tier: "community" },
-  { label: "Denounced", tier: "denounced" },
-];
+function Dot({ who, className }: { who: Who; className?: string }) {
+  return <span aria-hidden="true" className={cn("inline-block size-2 shrink-0 rounded-full", className)} style={{ background: `var(--${who})` }} />;
+}
 
-function Dot({ who }: { who: Who }) {
-  return <i className="dot" style={{ background: `var(--${who})` }} title={WHO_LABEL[who]} />;
+function Avatar({ login, className }: { login: string; className?: string }) {
+  return (
+    <img
+      alt=""
+      loading="lazy"
+      src={`https://avatars.githubusercontent.com/${encodeURIComponent(login)}?s=40`}
+      className={cn("size-4 shrink-0 rounded-full bg-muted", className)}
+    />
+  );
 }
 
 function TierBadge({ tier }: { tier: Tier }) {
   if (tier === "community") return null;
-  return <span className={`badge ${tier}`}>{tier}</span>;
+  return (
+    <Badge
+      className={cn(
+        tier === "maintainer" && "text-(--maintainer)",
+        tier === "vouched" && "text-(--vouched)",
+        tier === "denounced" && "border-destructive/50 text-destructive",
+      )}
+    >
+      {TIER_LABEL[tier]}
+    </Badge>
+  );
 }
 
-type RowProps = { pr: Pr; who: Who; tier: Tier; selected: boolean; showTheme: boolean; now: number; onSelect: (n: number, open: boolean) => void };
+type RowProps = { pr: Pr; who: Who; tier: Tier; selected: boolean; showTheme: boolean; now: number; onOpen: (n: number) => void };
 
-const Row = memo(function Row({ pr, who, tier, selected, showTheme, now, onSelect }: RowProps) {
+const Row = memo(function Row({ pr, who, tier, selected, showTheme, now, onOpen }: RowProps) {
   return (
     <div
-      className={`pr${selected ? " sel" : ""}`}
       data-n={pr.number}
-      onClick={() => onSelect(pr.number, true)}
-      role="row"
-      aria-selected={selected}
+      data-selected={selected || undefined}
+      onClick={() => onOpen(pr.number)}
+      className="flex h-9 cursor-default items-center gap-3 px-6 text-[13px] [contain-intrinsic-size:auto_36px] [content-visibility:auto] hover:bg-hover data-selected:bg-selected"
     >
       <Dot who={who} />
-      <span className="no">#{pr.number}</span>
-      <span className="title">
-        {pr.draft && <span className="badge">draft</span>}
+      <span className="w-[52px] shrink-0 text-xs text-muted-foreground tabular-nums">#{pr.number}</span>
+      <span className="min-w-0 flex-1 truncate font-[450]">
+        {pr.draft && <CircleDashedIcon className="mr-1.5 inline size-3.5 align-[-2px] text-muted-foreground" aria-label="Draft" />}
         {pr.title}
       </span>
-      {showTheme && <span className="theme">{pr.theme}</span>}
-      <span className="author">
-        {pr.author}
+      {showTheme && (
+        <Badge className="hidden h-[22px] max-w-44 shrink-0 gap-1.5 truncate px-2 @5xl:inline-flex">
+          <TagIcon className="size-3" aria-hidden="true" />
+          {pr.theme}
+        </Badge>
+      )}
+      <span className="hidden shrink-0 @3xl:inline-flex">
         <TierBadge tier={tier} />
       </span>
-      <span className="size" title={`+${pr.additions} −${pr.deletions}`}>
-        +{fmt(pr.additions)} −{fmt(pr.deletions)}
+      <span className="hidden w-24 shrink-0 text-right text-xs whitespace-nowrap tabular-nums @2xl:block" title={`+${pr.additions} −${pr.deletions}`}>
+        <span className="text-(--maintainer)">+{fmt(pr.additions)}</span> <span className="text-destructive/80">−{fmt(pr.deletions)}</span>
       </span>
-      <span className="age" title={new Date(pr.createdAt).toLocaleString()}>
+      <span className="w-8 shrink-0 text-right text-xs text-muted-foreground tabular-nums" title={new Date(pr.createdAt).toLocaleString()}>
         {ago(Date.parse(pr.createdAt), now)}
+      </span>
+      <span className="hidden w-32 shrink-0 items-center gap-1.5 text-xs text-muted-foreground @xl:flex" title={pr.author}>
+        <Avatar login={pr.author} className="size-[18px]" />
+        <span className="truncate">{pr.author}</span>
       </span>
     </div>
   );
 });
+
+const VIEWS: { label: string; who?: Who; tier?: Tier; author?: string }[] = [
+  { label: "All pull requests" },
+  { label: "Julius", who: "julius", author: "julius" },
+  { label: "Theo", who: "theo", author: "theo" },
+  { label: "Maintainers", who: "maintainer", tier: "maintainer" },
+  { label: "Vouched", who: "vouched", tier: "vouched" },
+  { label: "Unvouched", who: "community", tier: "community" },
+  { label: "Denounced", tier: "denounced" },
+];
+
+function SidebarItem({ active, onClick, children, count }: { active: boolean; onClick: () => void; children: ReactNode; count: number }) {
+  return (
+    <button
+      onClick={onClick}
+      aria-current={active || undefined}
+      className="flex h-7 w-full cursor-default items-center gap-2 rounded-md px-2 text-left text-[13px] font-[450] text-sidebar-foreground/85 hover:bg-sidebar-accent aria-current:bg-sidebar-accent aria-current:text-sidebar-foreground"
+    >
+      {children}
+      <span className="ml-auto text-xs text-muted-foreground tabular-nums">{fmt(count)}</span>
+    </button>
+  );
+}
 
 export function App() {
   useRevalidateOnView();
@@ -127,6 +187,7 @@ export function App() {
 
   const initial = useMemo(readUrl, []);
   const [q, setQ] = useState(initial.q);
+  const [draft, setDraft] = useState(() => parseQuery(initial.q).words.join(" "));
   const [group, setGroup] = useState<GroupBy>(initial.group);
   const [sort, setSort] = useState<SortBy>(initial.sort);
   const [pane, setPane] = useState<number | null>(initial.pr);
@@ -137,6 +198,8 @@ export function App() {
   const [help, setHelp] = useState(false);
   const searchRef = useRef<HTMLInputElement>(null);
   const listRef = useRef<HTMLDivElement>(null);
+  const filterRef = useRef<HTMLDivElement>(null);
+  const displayRef = useRef<HTMLDivElement>(null);
   const deferredQ = useDeferredValue(q);
 
   useEffect(() => {
@@ -155,6 +218,23 @@ export function App() {
   );
   const all = useMemo(() => (rows ? [...rows.values()] : []), [rows]);
   const asOf = status?.fetchedAt ?? now;
+
+  // Typing `author:theo ` in the search box turns the finished token into a filter chip.
+  const onSearch = (text: string, commitAll = false) => {
+    const trailing = commitAll || /\s$/.test(text);
+    const pieces = text.trim().split(/\s+/).filter(Boolean);
+    const last = trailing ? undefined : pieces.pop();
+    const parsed = parseQuery(pieces.join(" "));
+    const pendingToken = last && /^-?\w+:/.test(last);
+    setQ((cur) =>
+      serialize([...parseQuery(cur).tokens, ...parsed.tokens], [...parsed.words, ...(last && !pendingToken ? [last.toLowerCase()] : [])]),
+    );
+    setDraft([...parsed.words, ...(last ? [last] : [])].join(" ") + (trailing && !commitAll && parsed.words.length ? " " : ""));
+  };
+  const clearAll = () => {
+    setQ("");
+    setDraft("");
+  };
 
   const filtered = useMemo(() => {
     const match = makeMatcher(deferredQ, contributors, asOf);
@@ -176,17 +256,19 @@ export function App() {
       else map.set(k, [pr]);
     }
     const entries = [...map];
-    if (group === "who") entries.sort((a, b) => WHO.map((w) => WHO_LABEL[w]).indexOf(a[0]) - WHO.map((w) => WHO_LABEL[w]).indexOf(b[0]));
+    const whoOrder = WHO.map((w) => WHO_LABEL[w]);
+    if (group === "who") entries.sort((a, b) => whoOrder.indexOf(a[0]) - whoOrder.indexOf(b[0]));
     else entries.sort((a, b) => Number(a[0] === "Other") - Number(b[0] === "Other") || b[1].length - a[1].length);
     return entries;
   }, [filtered, group, contributors]);
 
   const visible = useMemo(() => groups.flatMap(([k, list]) => (collapsed.has(k) ? [] : list)), [groups, collapsed]);
   const paneRow = pane ? (rows?.get(pane) ?? null) : null;
+  const selectedRow = selected ? (rows?.get(selected) ?? null) : null;
 
-  const select = (n: number | null, open = false) => {
+  const openPr = (n: number) => {
     setSelected(n);
-    if (open) setPane(n);
+    setPane(n);
   };
   const move = (delta: number) => {
     if (visible.length === 0) return;
@@ -198,8 +280,8 @@ export function App() {
   };
 
   // Global shortcuts read the latest render's handlers through a ref.
-  const keys = useRef({ move, select, selected, pane, q, palette });
-  keys.current = { move, select, selected, pane, q, palette };
+  const keys = useRef({ move, openPr, selected, pane, q, palette });
+  keys.current = { move, openPr, selected, pane, q, palette };
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       const k = keys.current;
@@ -208,30 +290,33 @@ export function App() {
         setPalette((p) => !p);
         return;
       }
-      if (k.palette || e.metaKey || e.ctrlKey || e.altKey) return;
-      const typing = e.target instanceof HTMLElement && /^(INPUT|TEXTAREA|SELECT)$/.test(e.target.tagName);
-      if (typing) {
-        if (e.key === "Escape" || e.key === "ArrowDown" || e.key === "Enter") {
-          (e.target as HTMLElement).blur();
-          if (e.key !== "Escape") k.move(1);
+      // Menus and popovers handle their own Escape and arrows; don't act on keys they consumed.
+      if (e.defaultPrevented || k.palette || e.metaKey || e.ctrlKey || e.altKey) return;
+      const target = e.target instanceof HTMLElement ? e.target : null;
+      if (target?.closest("[role=dialog],[role=listbox],[role=menu]")) return;
+      if (target && /^(INPUT|TEXTAREA|SELECT)$/.test(target.tagName)) {
+        if (target === searchRef.current && (e.key === "Escape" || e.key === "ArrowDown")) {
+          target.blur();
+          if (e.key === "ArrowDown") k.move(1);
         }
         return;
       }
       const actions: Record<string, () => void> = {
         "/": () => searchRef.current?.focus(),
-        f: () => setPalette(true),
+        f: () => filterRef.current?.querySelector("button")?.click(),
+        V: () => displayRef.current?.querySelector("button")?.click(),
         j: () => k.move(1),
         ArrowDown: () => k.move(1),
         k: () => k.move(-1),
         ArrowUp: () => k.move(-1),
-        Enter: () => k.selected && k.select(k.selected, true),
+        Enter: () => k.selected && k.openPr(k.selected),
+        " ": () => (k.pane ? setPane(null) : k.selected && k.openPr(k.selected)),
         o: () => k.selected && window.open(prUrl(k.selected), "_blank", "noopener"),
         i: () => setInsights((v) => !v),
         "?": () => setHelp((v) => !v),
         Escape: () => {
           if (k.pane) setPane(null);
-          else if (k.q) setQ("");
-          setHelp(false);
+          else if (k.q) clearAll();
         },
       };
       const action = actions[e.key];
@@ -244,54 +329,79 @@ export function App() {
     return () => window.removeEventListener("keydown", onKey);
   }, []);
 
-  const authorCounts = useMemo(() => {
-    const c = new Map<string, number>();
-    for (const pr of all) c.set(pr.author, (c.get(pr.author) ?? 0) + 1);
-    return [...c].sort((a, b) => b[1] - a[1]);
-  }, [all]);
-
-  const commands = useMemo<Command[]>(() => {
-    const filter = (section: string, key: Parameters<typeof toggleToken>[1], value: string, label: string, hint?: string): Command => ({
-      id: `${key}:${value}`,
-      section,
-      label,
-      hint,
-      active: hasToken(q, key, value),
-      run: () => setQ((cur) => toggleToken(cur, key, value)),
-    });
-    const list: Command[] = [];
-    const num = Number(q.trim().replace(/^#/, ""));
-    if (Number.isInteger(num) && num > 0 && rows?.has(num)) {
-      list.push({ id: "go", section: "Go to", label: `#${num} ${rows.get(num)!.title}`, run: () => select(num, true) });
-    }
-    list.push(
-      { id: "clear", section: "Commands", label: "Clear filters", run: () => setQ("") },
-      { id: "insights", section: "Commands", label: insights ? "Hide insights" : "Show insights", hint: "I", run: () => setInsights((v) => !v) },
-      ...(Object.keys(GROUP_LABEL) as GroupBy[]).map((g) => ({ id: `group:${g}`, section: "Group by", label: GROUP_LABEL[g], active: group === g, run: () => setGroup(g) })),
-      ...(Object.keys(SORT_LABEL) as SortBy[]).map((s) => ({ id: `sort:${s}`, section: "Sort by", label: SORT_LABEL[s], active: sort === s, run: () => setSort(s) })),
-      ...RANGES.map((r) => filter("Opened", "opened", r.value, r.label, `opened:${r.value}`)),
-      filter("Status", "is", "draft", "Drafts only", "is:draft"),
-      { id: "nodraft", section: "Status", label: "Hide drafts", hint: "-is:draft", active: parseQuery(q).tokens.some((t) => t.neg && t.key === "is" && t.value === "draft"), run: () => setQ((cur) => toggleToken(cur, "is", "draft", true)) },
-      ...TIERS.map((t) => filter("Tier", "tier", t, t[0].toUpperCase() + t.slice(1), `tier:${t}`)),
-      ...THEMES.map((t) => filter("Theme", "theme", t.slug, t.name, `theme:${t.slug}`)),
-      ...["feat", "fix", "perf", "refactor", "docs", "test", "chore"].map((k) => filter("Type", "type", k, k, `type:${k}`)),
-      ...authorCounts.map(([a, n]) =>
-        filter("Author", "author", Object.entries(ALIASES).find(([, l]) => l === a.toLowerCase())?.[0] ?? a, a, `${n} open · ${tierOf(a, contributors)}`),
-      ),
-    );
-    return list;
-  }, [q, rows, insights, group, sort, authorCounts, contributors]);
+  const facets = useMemo<Facet[]>(() => {
+    const countBy = (fn: (pr: Pr) => string) => {
+      const m = new Map<string, number>();
+      for (const pr of all) m.set(fn(pr), (m.get(fn(pr)) ?? 0) + 1);
+      return m;
+    };
+    const authors = [...countBy((pr) => pr.author)].sort((a, b) => b[1] - a[1]);
+    const tiers = countBy((pr) => tierOf(pr.author, contributors));
+    const themes = countBy((pr) => pr.theme);
+    const kinds = [...countBy((pr) => pr.kind || "other")].sort((a, b) => b[1] - a[1]);
+    const drafts = all.filter((pr) => pr.draft).length;
+    const tierWho: Record<Tier, Who> = { maintainer: "maintainer", vouched: "vouched", community: "community", denounced: "community" };
+    return [
+      {
+        key: "author",
+        label: "Author",
+        plural: "authors",
+        icon: UserIcon,
+        values: authors.map(([login, count]) => ({ value: aliasOf(login) ?? login.toLowerCase(), label: login, count, leading: <Avatar login={login} /> })),
+      },
+      {
+        key: "tier",
+        label: "Contributor",
+        plural: "tiers",
+        icon: ShieldCheckIcon,
+        values: TIERS.map((t) => ({ value: t, label: TIER_LABEL[t], count: tiers.get(t) ?? 0, leading: <Dot who={tierWho[t]} /> })),
+      },
+      {
+        key: "theme",
+        label: "Theme",
+        plural: "themes",
+        icon: TagIcon,
+        values: THEMES.map((t) => ({ value: t.slug, label: t.name, count: themes.get(t.name) ?? 0 })),
+      },
+      {
+        key: "type",
+        label: "Type",
+        plural: "types",
+        icon: ShapesIcon,
+        values: kinds.map(([k, count]) => ({ value: k, label: k, count })),
+      },
+      {
+        key: "opened",
+        label: "Opened",
+        plural: "ranges",
+        icon: CalendarIcon,
+        single: true,
+        values: RANGES.map((r) => ({
+          value: r.value,
+          label: r.label,
+          count: all.filter((pr) => Date.parse(pr.createdAt) >= asOf - Number.parseInt(r.value) * 864e5).length,
+        })),
+      },
+      {
+        key: "is",
+        label: "Status",
+        plural: "statuses",
+        icon: CircleDashedIcon,
+        values: [
+          { value: "draft", label: "Draft", count: drafts },
+          { value: "ready", label: "Ready for review", count: all.length - drafts },
+        ],
+      },
+    ];
+  }, [all, contributors, asOf]);
 
   const { tokens } = parseQuery(q);
-  const activeView = VIEWS.find((v) => {
-    const people = tokens.filter((t) => t.key === "author" || t.key === "tier");
-    if (!v.author && !v.tier) return people.length === 0;
-    return people.length === 1 && !people[0].neg && people[0].value === (v.author ?? v.tier);
-  });
+  const people = tokens.filter((t) => t.key === "author" || t.key === "tier");
+  const activeView = VIEWS.find((v) =>
+    !v.author && !v.tier ? people.length === 0 : people.length === 1 && !people[0].neg && people[0].value === (v.author ?? v.tier),
+  );
   const viewCount = (v: (typeof VIEWS)[number]) =>
-    !v.author && !v.tier
-      ? all.length
-      : all.filter((pr) => (v.author ? pr.author.toLowerCase() === ALIASES[v.author] : tierOf(pr.author, contributors) === v.tier)).length;
+    !v.author && !v.tier ? all.length : all.filter((pr) => (v.author ? pr.author.toLowerCase() === ALIASES[v.author] : tierOf(pr.author, contributors) === v.tier)).length;
 
   const whoCounts = useMemo(() => {
     const c = Object.fromEntries(WHO.map((w) => [w, 0])) as Record<Who, number>;
@@ -307,243 +417,338 @@ export function App() {
       m.set(pr.theme, row);
     }
     const total = (r: Record<Who, number>) => WHO.reduce((s, w) => s + r[w], 0);
-    return [...m].sort((a, b) => Number(a[0] === "Other") - Number(b[0] === "Other") || total(b[1]) - total(a[1])).map(([theme, r]) => ({ theme, r, total: total(r) }));
+    return [...m]
+      .sort((a, b) => Number(a[0] === "Other") - Number(b[0] === "Other") || total(b[1]) - total(a[1]))
+      .map(([theme, r]) => ({ theme, r, total: total(r) }));
   }, [filtered, contributors]);
   const maxBar = Math.max(1, ...themeBars.map((b) => b.total));
+  const themeCounts = useMemo(() => {
+    const m = new Map<string, number>();
+    for (const pr of all) m.set(pr.theme, (m.get(pr.theme) ?? 0) + 1);
+    return m;
+  }, [all]);
 
   const loading = rows === null || (rows.size === 0 && !status?.fetchedAt);
+  const title = activeView?.label ?? "Filtered";
 
   return (
-    <div className={`app${pane ? " with-pane" : ""}`}>
-      <header className="top">
-        <div className="brand">
-          <b>Open PRs</b> <span className="muted">pingdotgg/t3code</span>
+    <div className="flex h-dvh overflow-hidden bg-sidebar text-foreground">
+      <aside className="hidden w-60 shrink-0 flex-col md:flex">
+        <div className="flex h-12 items-center gap-2 px-4">
+          <span className="grid size-5 place-items-center rounded-md bg-primary text-[10px] font-semibold text-primary-foreground">T3</span>
+          <span className="text-[13px] font-[590]">t3code</span>
+          <span className="text-[13px] text-muted-foreground">Pull requests</span>
         </div>
-        <span className="sync" title={status?.lastError ?? undefined}>
-          <i className={`live${status?.lastError ? " err" : ""}`} />
-          {status?.lastError ? "Refresh failed" : status?.fetchedAt ? (ago(status.fetchedAt, now) === "now" ? "Synced just now" : `Synced ${ago(status.fetchedAt, now)} ago`) : "Syncing…"}
-        </span>
-        <button className="cmdk" onClick={() => setPalette(true)}>
-          Commands <kbd>⌘K</kbd>
-        </button>
-      </header>
-
-      <nav className="views" aria-label="Views">
-        {VIEWS.map((v) => (
+        <div className="px-3 pb-3">
           <button
-            key={v.label}
-            aria-pressed={activeView === v}
-            onClick={() =>
-              setQ((cur) =>
-                setOnly(cur, ["author", "tier"], v.author ? { neg: false, key: "author", value: v.author } : v.tier ? { neg: false, key: "tier", value: v.tier } : undefined),
-              )
-            }
+            onClick={() => setPalette(true)}
+            className="flex h-7 w-full cursor-default items-center gap-2 rounded-md px-2 text-[13px] text-muted-foreground hover:bg-sidebar-accent"
           >
-            {v.who && <Dot who={v.who} />}
-            {v.label}
-            <span className="n">{fmt(viewCount(v))}</span>
+            <SearchIcon className="size-3.5" aria-hidden="true" />
+            Search and commands
+            <Kbd className="ml-auto">⌘K</Kbd>
           </button>
-        ))}
-      </nav>
-
-      <div className="filterbar">
-        <div className="search">
-          <input
-            ref={searchRef}
-            value={q}
-            onChange={(e) => setQ(e.target.value)}
-            placeholder="Search titles, #numbers, or filter: author:theo theme:mobile tier:vouched -is:draft"
-            spellCheck={false}
-          />
-          <kbd>/</kbd>
         </div>
-        <div className="ranges" role="group" aria-label="Opened within">
-          {RANGES.map((r) => (
-            <button key={r.value} aria-pressed={hasToken(q, "opened", r.value)} onClick={() => setQ((cur) => toggleToken(cur, "opened", r.value))}>
-              {r.value}
-            </button>
-          ))}
-        </div>
-        <label className="display">
-          Group
-          <select value={group} onChange={(e) => setGroup(e.target.value as GroupBy)}>
-            {(Object.keys(GROUP_LABEL) as GroupBy[]).map((g) => (
-              <option key={g} value={g}>{GROUP_LABEL[g]}</option>
+        <nav className="flex-1 space-y-5 overflow-y-auto px-3 pb-4" aria-label="Views">
+          <div className="space-y-px">
+            <div className="px-2 pb-1 text-xs text-muted-foreground">Views</div>
+            {VIEWS.map((v) => (
+              <SidebarItem
+                key={v.label}
+                active={activeView === v}
+                count={viewCount(v)}
+                onClick={() =>
+                  setQ((cur) => setOnly(cur, ["author", "tier"], v.author ? { neg: false, key: "author", value: v.author } : v.tier ? { neg: false, key: "tier", value: v.tier } : undefined))
+                }
+              >
+                {v.who ? <Dot who={v.who} /> : v.tier ? <span className="size-2 rounded-full border border-destructive" /> : <span className="size-2" />}
+                {v.label}
+              </SidebarItem>
             ))}
-          </select>
-        </label>
-        <label className="display">
-          Sort
-          <select value={sort} onChange={(e) => setSort(e.target.value as SortBy)}>
-            {(Object.keys(SORT_LABEL) as SortBy[]).map((s) => (
-              <option key={s} value={s}>{SORT_LABEL[s]}</option>
+          </div>
+          <div className="space-y-px">
+            <div className="px-2 pb-1 text-xs text-muted-foreground">Themes</div>
+            {THEMES.map((t) => (
+              <SidebarItem
+                key={t.slug}
+                active={isActive(q, "theme", t.slug) && tokens.filter((x) => x.key === "theme").length === 1}
+                count={themeCounts.get(t.name) ?? 0}
+                onClick={() =>
+                  setQ((cur) => (isActive(cur, "theme", t.slug) ? setOnly(cur, ["theme"]) : setOnly(cur, ["theme"], { neg: false, key: "theme", value: t.slug })))
+                }
+              >
+                <TagIcon className="size-3 text-muted-foreground" aria-hidden="true" />
+                <span className="truncate">{t.name}</span>
+              </SidebarItem>
             ))}
-          </select>
-        </label>
-      </div>
-      {tokens.length > 0 && (
-        <div className="chips">
-          {tokens.map((t) => (
-            <button key={`${t.neg}${t.key}${t.value}`} className="chip" onClick={() => setQ((cur) => removeToken(cur, t))} title="Remove filter">
-              <span className="k">{t.neg ? "not " : ""}{t.key}</span> {t.key === "theme" ? (THEMES.find((x) => x.slug === t.value)?.name ?? t.value) : t.value} ×
-            </button>
-          ))}
-          <button className="linkbtn" onClick={() => setQ("")}>Clear</button>
+          </div>
+        </nav>
+        <div className="flex items-center gap-2 px-5 py-3 text-xs text-muted-foreground" title={status?.lastError ?? undefined}>
+          <span className={cn("size-1.5 rounded-full", status?.lastError ? "bg-destructive" : "bg-(--maintainer)")} />
+          {status?.lastError
+            ? "Refresh failed"
+            : status?.fetchedAt
+              ? ago(status.fetchedAt, now) === "now"
+                ? "Synced just now"
+                : `Synced ${ago(status.fetchedAt, now)} ago`
+              : "Syncing…"}
+          <button className="ml-auto cursor-default hover:text-foreground" onClick={() => setHelp(true)} aria-label="Keyboard shortcuts">
+            <Kbd>?</Kbd>
+          </button>
         </div>
-      )}
+      </aside>
 
-      <div className="body">
-        <main className="main" ref={listRef}>
-          {insights && filtered.length > 0 && (
-            <section className="insights">
-              <div className="kpis">
-                <div className="kpi">
-                  <span className="v">{fmt(filtered.length)}</span>
-                  <span className="l">open PRs</span>
-                </div>
-                {WHO.map((w) => (
-                  <div className="kpi" key={w}>
-                    <span className="v">{fmt(whoCounts[w])}</span>
-                    <span className="l"><Dot who={w} />{WHO_LABEL[w]}</span>
-                  </div>
-                ))}
-              </div>
-              <div className="bars" role="table" aria-label="Open PRs by theme">
-                {themeBars.map(({ theme, r, total }) => (
-                  <button
-                    key={theme}
-                    className={`bar-row${hasToken(q, "theme", themeSlug(theme)) ? " on" : ""}`}
-                    onClick={() => setQ((cur) => toggleToken(cur, "theme", themeSlug(theme)))}
-                    title={`${theme}: ${WHO.filter((w) => r[w]).map((w) => `${WHO_LABEL[w]} ${r[w]}`).join(", ")}`}
-                  >
-                    <span className="name">{theme}</span>
-                    <span className="bar">
-                      {WHO.filter((w) => r[w]).map((w) => (
-                        <span key={w} className="seg" style={{ flexBasis: `calc(${(r[w] / maxBar) * 100}% - 2px)`, background: `var(--${w})` }} />
-                      ))}
-                    </span>
-                    <span className="num">{fmt(total)}</span>
-                  </button>
-                ))}
-              </div>
-            </section>
-          )}
+      <div className="flex min-w-0 flex-1 flex-col overflow-hidden bg-background md:my-2 md:mr-2 md:rounded-xl md:border md:border-border">
+        <header className="flex h-11 shrink-0 items-center gap-2 border-b border-border px-4">
+          <h1 className="truncate text-[13px] font-[510]">{title}</h1>
+          <span className="text-xs text-muted-foreground tabular-nums">{fmt(filtered.length)}</span>
+          <div className="relative ml-auto hidden w-64 sm:block">
+            <SearchIcon className="pointer-events-none absolute top-1/2 left-2 size-3.5 -translate-y-1/2 text-muted-foreground" aria-hidden="true" />
+            <input
+              ref={searchRef}
+              value={draft}
+              onChange={(e) => onSearch(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") onSearch(draft, true);
+              }}
+              placeholder="Search, or type author:theo…"
+              spellCheck={false}
+              aria-label="Search pull requests"
+              className="h-7 w-full rounded-md border border-border bg-secondary/60 pr-7 pl-7 text-[13px] outline-none placeholder:text-muted-foreground focus:border-ring focus:bg-background"
+            />
+            <Kbd className="absolute top-1/2 right-1.5 -translate-y-1/2">/</Kbd>
+          </div>
+          <Button variant="ghost" size="icon" className="sm:hidden" aria-label="Search" onClick={() => setPalette(true)}>
+            <SearchIcon />
+          </Button>
+        </header>
 
-          {loading ? (
-            <p className="muted pad">Loading pull requests…</p>
-          ) : filtered.length === 0 ? (
-            <p className="muted pad">No PRs match. <button className="linkbtn" onClick={() => setQ("")}>Clear filters</button></p>
-          ) : (
-            groups.map(([key, list]) => (
-              <section key={key} className="group">
-                <button
-                  className="group-head"
-                  aria-expanded={!collapsed.has(key)}
-                  onClick={() =>
-                    setCollapsed((cur) => {
-                      const next = new Set(cur);
-                      if (!next.delete(key)) next.add(key);
-                      return next;
-                    })
-                  }
-                >
-                  <span className="chev">›</span>
-                  {group === "author" && <Dot who={whoOf(key, contributors)} />}
-                  <b>{key}</b>
-                  {group === "author" && <TierBadge tier={tierOf(key, contributors)} />}
-                  <span className="muted">{fmt(list.length)}</span>
-                </button>
-                {!collapsed.has(key) &&
-                  list.map((pr) => (
-                    <Row
-                      key={pr.number}
-                      pr={pr}
-                      who={whoOf(pr.author, contributors)}
-                      tier={tierOf(pr.author, contributors)}
-                      selected={pr.number === selected}
-                      showTheme={group !== "theme"}
-                      now={now}
-                      onSelect={select}
-                    />
-                  ))}
-              </section>
-            ))
-          )}
-        </main>
-
-        {pane && (
-          <aside className="pane" aria-label="Pull request">
-            {paneRow ? (
-              <>
-                <div className="pane-head">
-                  <span className="muted">#{paneRow.number}</span>
-                  <a className="btn" href={prUrl(paneRow.number)} target="_blank" rel="noopener">Open on GitHub <kbd>O</kbd></a>
-                  <button className="btn" onClick={() => setPane(null)} aria-label="Close">Esc</button>
-                </div>
-                <h2>{paneRow.title}</h2>
-                <dl className="meta">
-                  <dt>Author</dt>
-                  <dd>
-                    <button className="linkbtn" onClick={() => setQ((cur) => setOnly(cur, ["author", "tier"], { neg: false, key: "author", value: paneRow.author }))}>
-                      {paneRow.author}
-                    </button>{" "}
-                    <TierBadge tier={tierOf(paneRow.author, contributors)} />
-                    {contributors.get(paneRow.author.toLowerCase())?.reason && (
-                      <div className="muted">{contributors.get(paneRow.author.toLowerCase())!.reason}</div>
-                    )}
-                  </dd>
-                  <dt>Theme</dt>
-                  <dd>
-                    <button className="linkbtn" onClick={() => setQ((cur) => toggleToken(cur, "theme", themeSlug(paneRow.theme)))}>{paneRow.theme}</button>
-                  </dd>
-                  <dt>Opened</dt>
-                  <dd>{new Date(paneRow.createdAt).toLocaleString()}</dd>
-                  <dt>Updated</dt>
-                  <dd>{ago(Date.parse(paneRow.updatedAt), now)} ago</dd>
-                  <dt>Size</dt>
-                  <dd>+{fmt(paneRow.additions)} −{fmt(paneRow.deletions)}{paneRow.draft ? " · draft" : ""}</dd>
-                </dl>
-                <Suspense fallback={<p className="muted">Loading description…</p>}>
-                  <Description number={paneRow.number} />
-                </Suspense>
-              </>
-            ) : (
-              <p className="muted pad">PR #{pane} is not open. <button className="linkbtn" onClick={() => setPane(null)}>Close</button></p>
+        <div className="flex min-h-10 shrink-0 flex-wrap items-center gap-1.5 border-b border-border px-4 py-1.5">
+          <FilterChips facets={facets} q={q} setQ={setQ} />
+          <div ref={filterRef} className="contents">
+            <FilterMenu
+              facets={facets}
+              q={q}
+              setQ={setQ}
+              label="Add filter"
+              triggerClassName={cn(buttonVariants({ variant: "ghost", size: tokens.length ? "icon-sm" : "sm" }))}
+              trigger={
+                <>
+                  <ListFilterIcon aria-hidden="true" />
+                  {tokens.length ? null : "Filter"}
+                </>
+              }
+            />
+          </div>
+          <div className="ml-auto flex items-center gap-1.5">
+            {tokens.length > 0 && (
+              <Button variant="ghost" size="sm" onClick={clearAll}>
+                Clear
+              </Button>
             )}
-          </aside>
-        )}
-      </div>
-
-      <footer className="hints">
-        <span><kbd>J</kbd><kbd>K</kbd> move</span>
-        <span><kbd>↵</kbd> open</span>
-        <span><kbd>O</kbd> GitHub</span>
-        <span><kbd>/</kbd> search</span>
-        <span><kbd>⌘K</kbd> commands</span>
-        <span><kbd>I</kbd> insights</span>
-        <span><kbd>?</kbd> help</span>
-      </footer>
-
-      {help && (
-        <div className="overlay" onMouseDown={() => setHelp(false)}>
-          <div className="palette help" onMouseDown={(e) => e.stopPropagation()}>
-            <h2>Filters</h2>
-            <p>Type these in the search box. Repeat a key to match any of the values; prefix with <code>-</code> to exclude.</p>
-            <ul>
-              <li><code>author:theo</code>, <code>author:julius</code>, <code>author:&lt;login&gt;</code></li>
-              <li><code>tier:maintainer</code> · <code>vouched</code> · <code>community</code> · <code>denounced</code> (from .github/VOUCHED.td)</li>
-              <li><code>theme:{THEMES.map((t) => t.slug).join(" · ")}</code></li>
-              <li><code>type:feat</code> · <code>fix</code> · <code>perf</code> …</li>
-              <li><code>opened:7d</code> (h, d, w, m) · <code>is:draft</code> · <code>-is:draft</code></li>
-              <li>Anything else matches the title, <code>#number</code> or author.</li>
-            </ul>
-            <h2>Keys</h2>
-            <p><kbd>J</kbd>/<kbd>K</kbd> move · <kbd>↵</kbd> open · <kbd>O</kbd> GitHub · <kbd>/</kbd> search · <kbd>F</kbd> or <kbd>⌘K</kbd> commands · <kbd>I</kbd> insights · <kbd>Esc</kbd> close</p>
+            <div ref={displayRef} className="contents">
+              <DisplayMenu group={group} setGroup={setGroup} sort={sort} setSort={setSort} insights={insights} setInsights={setInsights} />
+            </div>
           </div>
         </div>
-      )}
 
-      {palette && <Palette commands={commands} onClose={() => setPalette(false)} />}
+        <div className="flex min-h-0 flex-1">
+          <main ref={listRef} className="@container min-w-0 flex-1 overflow-y-auto" aria-label="Pull requests">
+            {insights && filtered.length > 0 && (
+              <section className="space-y-4 border-b border-border px-6 py-4" aria-label="Insights">
+                <div className="flex flex-wrap gap-x-7 gap-y-2">
+                  {WHO.map((w) => (
+                    <div key={w}>
+                      <div className="text-[15px] font-[590] tabular-nums">{fmt(whoCounts[w])}</div>
+                      <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
+                        <Dot who={w} />
+                        {WHO_LABEL[w]}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+                <div className="grid gap-px" role="table" aria-label="Open pull requests by theme">
+                  {themeBars.map(({ theme, r, total }) => (
+                    <button
+                      key={theme}
+                      onClick={() => setQ((cur) => toggleToken(cur, "theme", themeSlug(theme)))}
+                      title={`${theme}: ${WHO.filter((w) => r[w]).map((w) => `${WHO_LABEL[w]} ${r[w]}`).join(", ")}`}
+                      aria-pressed={isActive(q, "theme", themeSlug(theme))}
+                      className="grid cursor-default grid-cols-[minmax(0,11rem)_1fr_3rem] items-center gap-3 rounded px-1 py-[3px] text-left text-xs hover:bg-hover aria-pressed:bg-selected"
+                    >
+                      <span className="truncate text-muted-foreground">{theme}</span>
+                      <span className="flex h-2 gap-0.5">
+                        {WHO.filter((w) => r[w]).map((w) => (
+                          <span
+                            key={w}
+                            className="h-full shrink-0 first:rounded-l-sm last:rounded-r-sm"
+                            style={{ flexBasis: `calc(${(r[w] / maxBar) * 100}% - 2px)`, background: `var(--${w})` }}
+                          />
+                        ))}
+                      </span>
+                      <span className="text-right text-muted-foreground tabular-nums">{fmt(total)}</span>
+                    </button>
+                  ))}
+                </div>
+              </section>
+            )}
+
+            {loading ? (
+              <p className="p-6 text-[13px] text-muted-foreground">Loading pull requests…</p>
+            ) : filtered.length === 0 ? (
+              <div className="grid place-items-center gap-3 p-16 text-center text-[13px] text-muted-foreground">
+                No pull requests match these filters.
+                <Button size="sm" onClick={clearAll}>Clear filters</Button>
+              </div>
+            ) : (
+              groups.map(([key, list]) => (
+                <section key={key}>
+                  <button
+                    aria-expanded={!collapsed.has(key)}
+                    onClick={() =>
+                      setCollapsed((cur) => {
+                        const next = new Set(cur);
+                        if (!next.delete(key)) next.add(key);
+                        return next;
+                      })
+                    }
+                    className="group sticky top-0 z-10 flex h-9 w-full cursor-default items-center gap-2 bg-group px-6 text-left text-[13px]"
+                  >
+                    <span className="-ml-3 w-2 text-muted-foreground transition-transform group-aria-expanded:rotate-90">›</span>
+                    {group === "author" && <Avatar login={key} />}
+                    {group === "who" && <Dot who={WHO.find((w) => WHO_LABEL[w] === key) ?? "community"} />}
+                    {group === "theme" && <TagIcon className="size-3.5 text-muted-foreground" aria-hidden="true" />}
+                    <span className="font-[510]">{key}</span>
+                    {group === "author" && <TierBadge tier={tierOf(key, contributors)} />}
+                    <span className="text-muted-foreground tabular-nums">{fmt(list.length)}</span>
+                  </button>
+                  {!collapsed.has(key) &&
+                    list.map((pr) => (
+                      <Row
+                        key={pr.number}
+                        pr={pr}
+                        who={whoOf(pr.author, contributors)}
+                        tier={tierOf(pr.author, contributors)}
+                        selected={pr.number === selected}
+                        showTheme={group !== "theme"}
+                        now={now}
+                        onOpen={openPr}
+                      />
+                    ))}
+                </section>
+              ))
+            )}
+          </main>
+
+          {pane && (
+            <aside
+              aria-label="Pull request"
+              className="fixed inset-0 z-30 overflow-y-auto bg-background px-6 pt-3 pb-10 md:static md:z-auto md:w-[min(560px,45vw)] md:shrink-0 md:border-l md:border-border"
+            >
+              {paneRow ? (
+                <>
+                  <div className="flex items-center gap-2">
+                    <span className="mr-auto text-xs text-muted-foreground tabular-nums">pingdotgg/t3code#{paneRow.number}</span>
+                    <a className={buttonVariants({ variant: "outline", size: "sm" })} href={prUrl(paneRow.number)} target="_blank" rel="noopener">
+                      GitHub <ArrowUpRightIcon aria-hidden="true" />
+                    </a>
+                    <Button variant="ghost" size="icon-sm" onClick={() => setPane(null)} aria-label="Close">
+                      <XIcon />
+                    </Button>
+                  </div>
+                  <h2 className="mt-5 mb-5 text-xl leading-snug font-[590]">{paneRow.title}</h2>
+                  <dl className="mb-6 grid grid-cols-[96px_1fr] gap-x-3 gap-y-2.5 border-b border-border pb-6 text-[13px]">
+                    <dt className="text-muted-foreground">Author</dt>
+                    <dd className="flex flex-wrap items-center gap-1.5">
+                      <button
+                        className="flex cursor-default items-center gap-1.5 hover:underline"
+                        onClick={() => setQ((cur) => setOnly(cur, ["author", "tier"], { neg: false, key: "author", value: aliasOf(paneRow.author) ?? paneRow.author.toLowerCase() }))}
+                      >
+                        <Avatar login={paneRow.author} className="size-[18px]" />
+                        {paneRow.author}
+                      </button>
+                      <TierBadge tier={tierOf(paneRow.author, contributors)} />
+                      {contributors.get(paneRow.author.toLowerCase())?.reason && (
+                        <span className="w-full text-xs text-muted-foreground">{contributors.get(paneRow.author.toLowerCase())!.reason}</span>
+                      )}
+                    </dd>
+                    <dt className="text-muted-foreground">Theme</dt>
+                    <dd>
+                      <button className="flex cursor-default items-center gap-1.5 hover:underline" onClick={() => setQ((cur) => toggleToken(cur, "theme", themeSlug(paneRow.theme)))}>
+                        <TagIcon className="size-3.5 text-muted-foreground" aria-hidden="true" />
+                        {paneRow.theme}
+                      </button>
+                    </dd>
+                    <dt className="text-muted-foreground">Status</dt>
+                    <dd>{paneRow.draft ? "Draft" : "Ready for review"}</dd>
+                    <dt className="text-muted-foreground">Opened</dt>
+                    <dd>{new Date(paneRow.createdAt).toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" })}</dd>
+                    <dt className="text-muted-foreground">Updated</dt>
+                    <dd>{ago(Date.parse(paneRow.updatedAt), now)} ago</dd>
+                    <dt className="text-muted-foreground">Changes</dt>
+                    <dd className="tabular-nums">
+                      <span className="text-(--maintainer)">+{fmt(paneRow.additions)}</span> <span className="text-destructive/80">−{fmt(paneRow.deletions)}</span>
+                    </dd>
+                  </dl>
+                  <Suspense fallback={<p className="text-[13px] text-muted-foreground">Loading description…</p>}>
+                    <Description number={paneRow.number} />
+                  </Suspense>
+                </>
+              ) : (
+                <p className="text-[13px] text-muted-foreground">
+                  PR #{pane} is no longer open.{" "}
+                  <button className="underline" onClick={() => setPane(null)}>Close</button>
+                </p>
+              )}
+            </aside>
+          )}
+        </div>
+      </div>
+
+      <CommandPalette
+        open={palette}
+        onOpenChange={setPalette}
+        prs={all}
+        facets={facets}
+        q={q}
+        setQ={setQ}
+        setGroup={setGroup}
+        setSort={setSort}
+        toggleInsights={() => setInsights((v) => !v)}
+        selected={selectedRow}
+        openPr={openPr}
+      />
+
+      <Dialog open={help} onOpenChange={setHelp}>
+        <DialogBackdrop />
+        <DialogContent className="max-h-[80vh] overflow-y-auto p-5 text-[13px]">
+          <DialogTitle className="mb-3 text-sm font-[590]">Keyboard shortcuts and filters</DialogTitle>
+          <div className="grid grid-cols-[auto_1fr] gap-x-4 gap-y-1.5">
+            {[
+              ["⌘K", "Command menu and PR search"],
+              ["F", "Add a filter"],
+              ["⇧V", "Display options"],
+              ["/", "Search"],
+              ["J / K", "Move down / up"],
+              ["↵ or Space", "Open the selected PR"],
+              ["O", "Open on GitHub"],
+              ["I", "Toggle insights"],
+              ["Esc", "Close the PR, then clear filters"],
+            ].map(([k, label]) => (
+              <div key={k} className="contents">
+                <Kbd className="justify-self-start">{k}</Kbd>
+                <span className="text-muted-foreground">{label}</span>
+              </div>
+            ))}
+          </div>
+          <p className="mt-4 mb-1 font-[510]">Typing filters</p>
+          <p className="text-muted-foreground">
+            In search, type <code>author:theo</code>, <code>tier:vouched</code>, <code>theme:mobile</code>, <code>type:feat</code>, <code>opened:7d</code> or{" "}
+            <code>is:draft</code>, then a space. Prefix with <code>-</code> to exclude. Tiers come from <code>.github/VOUCHED.td</code> and{" "}
+            <code>.github/TRIAGE_EXEMPTIONS.td</code>.
+          </p>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
