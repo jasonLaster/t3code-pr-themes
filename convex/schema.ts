@@ -160,6 +160,36 @@ export default defineSchema({
     tier: v.union(v.literal("maintainer"), v.literal("vouched"), v.literal("denounced")),
     reason: v.optional(v.string()),
   }),
+  // App users, one per GitHub account. Created on first sign-in (convex/users.ts).
+  users: defineTable({
+    githubId: v.string(),
+    login: v.string(),
+    name: v.optional(v.string()),
+    avatarUrl: v.optional(v.string()),
+  })
+    .index("by_githubId", ["githubId"])
+    .index("by_login", ["login"]),
+  // Comments on a PR, kept in the app for now. A later GitHub sync can mirror
+  // these and key them by GitHub comment id.
+  comments: defineTable({
+    pr: v.number(),
+    userId: v.id("users"),
+    body: v.string(),
+    editedAt: v.optional(v.number()),
+  })
+    .index("by_pr", ["pr"])
+    .index("by_user", ["userId"]),
+  // Saved filter/group/sort combinations. Public views are listed for everyone.
+  views: defineTable({
+    userId: v.id("users"),
+    name: v.string(),
+    q: v.string(),
+    group: v.string(),
+    sort: v.string(),
+    public: v.boolean(),
+  })
+    .index("by_user", ["userId"])
+    .index("by_public", ["public"]),
   status: defineTable({
     syncId: v.optional(v.number()),
     fetchedAt: v.optional(v.number()),

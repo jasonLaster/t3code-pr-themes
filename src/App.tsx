@@ -21,6 +21,9 @@ import {
 } from "lucide-react";
 import { lazy, memo, Suspense, useCallback, useDeferredValue, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { api } from "../convex/_generated/api";
+import type { Id } from "../convex/_generated/dataModel";
+import { Account } from "@/auth";
+import { SavedViewsNav, SaveViewMenu, sameState, useSavedViews, type SavedView } from "@/views";
 import { assess, scoreTone } from "./assessment";
 import { ChecksPanel } from "@/ChecksPanel";
 import { CommandPalette } from "@/components/command-palette";
@@ -87,9 +90,11 @@ import { isHistorical, useHistory, useRevalidateOnView, useSyncedPrs, type Pr } 
 const ReviewPanel = lazy(() => import("./ReviewPanel"));
 const Description = lazy(() => import("@/Description").then((m) => ({ default: m.Description })));
 const Comments = lazy(() => import("@/Comments").then((m) => ({ default: m.Comments })));
+const Discussion = lazy(() => import("@/Discussion").then((m) => ({ default: m.Discussion })));
 type PaneTab = "description" | "review" | "comments" | "ci";
 const PANE_TABS: PaneTab[] = ["description", "review", "comments", "ci"];
 const PANE_TAB_KEY = "pane:tab";
+const AUTH_CALLBACK_PARAMS = ["convexAuthCode", "convexAuthError"];
 const InsightsView = lazy(() => import("@/components/insights").then((m) => ({ default: m.InsightsView })));
 
 const prUrl = (n: number) => `https://github.com/pingdotgg/t3code/pull/${n}`;
@@ -135,9 +140,9 @@ function readUrl() {
   };
 }
 
-type RowProps = { pr: Pr; who: Who; tier: Tier; selected: boolean; showTheme: boolean; now: number; hidden: ReadonlySet<Column>; onOpen: (n: number) => void };
+type RowProps = { pr: Pr; who: Who; tier: Tier; selected: boolean; showTheme: boolean; now: number; hidden: ReadonlySet<Column>; comments: number; onOpen: (n: number) => void };
 
-const Row = memo(function Row({ pr, who, tier, selected, showTheme, now, hidden, onOpen }: RowProps) {
+const Row = memo(function Row({ pr, who, tier, selected, showTheme, now, hidden, comments, onOpen }: RowProps) {
   const rating = hidden.has("score") ? undefined : assess(pr);
   const show = (c: Column) => !hidden.has(c);
   return (
@@ -153,6 +158,12 @@ const Row = memo(function Row({ pr, who, tier, selected, showTheme, now, hidden,
         <PrStateIcon pr={pr} className="mr-1.5 inline align-[-2px]" />
         {pr.title}
       </span>
+      {comments > 0 && (
+        <span className="flex shrink-0 items-center gap-1 text-xs text-muted-foreground tabular-nums" title={`${comments} comment${comments === 1 ? "" : "s"} in this app`}>
+          <MessageSquareIcon className="size-3.5" aria-hidden="true" />
+          {comments}
+        </span>
+      )}
       {rating && (
         <span
           className={cn("inline-flex h-[18px] min-w-7 shrink-0 items-center justify-center rounded-full px-1.5 text-[11px] font-semibold tabular-nums", scoreTone(rating.total))}
@@ -305,6 +316,10 @@ export function App() {
   const { rows } = useSyncedPrs();
   const status = useQuery(api.prs.status);
   const contributorList = useQuery(api.prs.contributors);
+  const commentCounts = useQuery(api.comments.counts);
+  const savedViews = useSavedViews();
+  // The saved view last opened from the sidebar, so edits to it can be saved back.
+  const [viewId, setViewId] = useState<Id<"views"> | null>(null);
   const now = useNow();
 
   const initial = useMemo(readUrl, []);
@@ -433,6 +448,13 @@ export function App() {
       if (segment !== "who") p.set("segment", segment);
     }
     if (pane) p.set("pr", String(pane));
+    // This effect runs before ConvexAuthProvider's, so keep the OAuth callback params for it to
+    // redeem; it strips them itself once read.
+    const current = new URLSearchParams(location.search);
+    for (const key of AUTH_CALLBACK_PARAMS) {
+      const value = current.get(key);
+      if (value !== null) p.set(key, value);
+    }
     const next = `${location.pathname}${p.size ? `?${p}` : ""}`;
     const mode = historyMode.current;
     historyMode.current = "push";
@@ -675,7 +697,30 @@ export function App() {
 
   const loading = historyLoading || (historyRequested && status === undefined) ||
     rows === null || (showOpen && rows.size === 0 && !status?.fetchedAt);
-  const title = historyRequested ? "Pull request history" : activeView?.label ?? "Filtered";
+  const allSaved: SavedView[] = useMemo(() => (savedViews ? [...savedViews.mine, ...savedViews.shared] : []), [savedViews]);
+  const viewState = { q, group, sort };
+  const openedView = allSaved.find((v) => v._id === viewId) ?? null;
+  const activeSaved = openedView && sameState(openedView, viewState) ? openedView : (allSaved.find((v) => sameState(v, viewState)) ?? null);
+  const myOpenView = openedView && !openedView.owner ? openedView : null;
+  const openSaved = (v: SavedView) => {
+    setViewId(v._id);
+    setQ(v.q);
+    setDraft(parseQuery(v.q).words.join(" "));
+    setGroup(isGroupKey(v.group) ? v.group : "theme");
+    setSort(Object.hasOwn(SORT_LABEL, v.sort) ? (v.sort as SortBy) : "created");
+  };
+  const savedCounts = useMemo(() => {
+    const out = new Map<string, number>();
+    for (const v of allSaved) {
+      const match = makeMatcher(v.q, ctx);
+      let n = 0;
+      for (const pr of all) if (match(pr)) n++;
+      out.set(v._id, n);
+    }
+    return out;
+  }, [allSaved, all, ctx]);
+
+  const title = historyRequested ? "Pull request history" : activeSaved?.name ?? activeView?.label ?? "Filtered";
   const loadingMessage = historyRequested ? "Loading pull request history…" : "Loading pull requests…";
   const historyNotice = historyUnavailable ? (
     <p className="border-b border-border px-6 py-2 text-xs text-muted-foreground" role="status">
@@ -731,6 +776,7 @@ export function App() {
           </button>
         </div>
         <nav className="flex-1 space-y-4 overflow-y-auto px-3 pb-4" aria-label="Views">
+          <SavedViewsNav lists={savedViews} activeId={activeSaved?._id ?? null} open={openSaved} count={(v) => savedCounts.get(v._id) ?? 0} />
           <SidebarGroup label="Status" collapsed={collapsedGroups.has("Status")} onToggle={() => toggleGroup("Status")}>
             {STATUS_VIEWS.map((st) => (
               <SidebarItem
@@ -777,6 +823,9 @@ export function App() {
             </SidebarGroup>
           )}
         </nav>
+        <div className="px-3">
+          <Account />
+        </div>
         <div className="flex items-center gap-2 px-5 py-3 text-xs text-muted-foreground" title={status?.lastError ?? undefined}>
           <span className={cn("size-1.5 rounded-full", status?.lastError ? "bg-destructive" : "bg-(--maintainer)")} />
           {status?.lastError
@@ -880,6 +929,7 @@ export function App() {
                 Clear
               </Button>
             )}
+            <SaveViewMenu state={viewState} view={myOpenView} onSaved={setViewId} />
             <div ref={displayRef} className="contents">
               <DisplayMenu view={view} setView={setView} groups={groupChoices} group={group} setGroup={setGroup} sort={sort} setSort={setSort} hiddenColumns={hiddenColumns} setColumn={setColumn} />
             </div>
@@ -961,6 +1011,7 @@ export function App() {
                             showTheme={group !== "theme"}
                             now={now}
                             hidden={hiddenColumns}
+                            comments={commentCounts?.[pr.number] ?? 0}
                             onOpen={openPr}
                           />
                         ))}
@@ -1128,7 +1179,10 @@ export function App() {
                     ) : activePaneTab === "ci" ? (
                       <ChecksPanel pr={paneRow} />
                     ) : (
-                      <Comments key={paneRow.number} number={paneRow.number} updatedAt={paneRow.updatedAt} />
+                      <>
+                        <Comments key={paneRow.number} number={paneRow.number} updatedAt={paneRow.updatedAt} />
+                        <Discussion pr={paneRow.number} />
+                      </>
                     )}
                   </Suspense>
                 </>

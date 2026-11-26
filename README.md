@@ -7,6 +7,25 @@ Pull requests on [pingdotgg/t3code](https://github.com/pingdotgg/t3code) grouped
 - **Vite + React** client keeps a local replica of every open PR (IndexedDB), syncs deltas from `prs.since`, and filters locally. Themes come from keyword rules in `shared/themes.ts`; contributor tiers from `.github/VOUCHED.td` and `.github/TRIAGE_EXEMPTIONS.td`.
 - **Filters and grouping** come from one registry, `FIELDS` in `src/fields.tsx`. Each entry says how to bucket a PR, how to label the buckets and, if needed, how to filter. The filter menu, chips, typed `key:value` search, Display → Grouping and the command menu all read it, so a new property is one entry. Use `dateField` and `rangeField` for dates and counts.
 
+- **Sign in with GitHub** (Convex Auth, `convex/auth.ts`) lets people comment on PRs (`convex/comments.ts`) and save views (`convex/views.ts`). Reading stays public. Comments live in the app for now. Authors edit and delete their own, maintainers can delete any, and denounced accounts can't post. Saved views are private or public. Public views show under "Shared views" for everyone.
+
+## GitHub sign-in setup
+
+Create one [GitHub OAuth App](https://github.com/settings/applications/new) per Convex deployment (dev and prod):
+
+- **Homepage URL:** the site (`http://localhost:5173` for dev)
+- **Authorization callback URL:** `<CONVEX_SITE_URL>/oauth/github/callback`, e.g. `https://<deployment>.convex.site/oauth/github/callback`
+
+Then, on that deployment:
+
+```sh
+npx convex env set AUTH_GITHUB_CLIENT_ID <client id>
+npx convex env set AUTH_GITHUB_CLIENT_SECRET <client secret>
+npx convex env set SITE_ORIGINS https://<your-vercel-domain>   # comma-separated; localhost:5173 is always allowed
+```
+
+`convex.config.ts` declares the two `AUTH_GITHUB_*` vars as required, so a push fails until they are set.
+
 ## Develop
 
 ```sh
@@ -14,6 +33,7 @@ npm install
 npx convex dev          # pushes functions to your dev deployment, writes .env.local
 npx convex env set GITHUB_TOKEN <fine-grained token, public repos read-only>
 npm run dev
+npm test                # Convex permission tests (convex-test)
 ```
 
 ## State tabs and merge status

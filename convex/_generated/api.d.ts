@@ -8,10 +8,14 @@
  * @module
  */
 
+import type * as auth from "../auth.js";
+import type * as comments from "../comments.js";
 import type * as crons from "../crons.js";
 import type * as github from "../github.js";
 import type * as prHistory from "../prHistory.js";
 import type * as prs from "../prs.js";
+import type * as users from "../users.js";
+import type * as views from "../views.js";
 
 import type {
   ApiFromModules,
@@ -20,10 +24,14 @@ import type {
 } from "convex/server";
 
 declare const fullApi: ApiFromModules<{
+  auth: typeof auth;
+  comments: typeof comments;
   crons: typeof crons;
   github: typeof github;
   prHistory: typeof prHistory;
   prs: typeof prs;
+  users: typeof users;
+  views: typeof views;
 }>;
 
 /**
@@ -52,4 +60,7 @@ export declare const internal: FilterApi<
   FunctionReference<any, "internal">
 >;
 
-export declare const components: {};
+export declare const components: {
+  auth: import("@convex-dev/auth/_generated/component.js").ComponentApi<"auth">;
+  authGithub: import("@convex-dev/auth/components/github/_generated/component.js").ComponentApi<"authGithub">;
+};
