@@ -23,7 +23,7 @@ Convex stores history in `prHistory`. The client requests the selected states in
 
 Use Node 24 or later and an authenticated, read-only `gh` CLI to resume the backfill:
 
-1. Run `node scripts/fetch-history.mjs` to fetch the GitHub snapshot. The cutoff and downloaded ranges are checkpointed under `.pr-backfill/`.
+1. Run `node scripts/fetch-history.mjs` to fetch the GitHub snapshot. The cutoff and downloaded ranges are checkpointed under `.pr-backfill/`. Use `node scripts/fetch-history.mjs --prepare` to queue saved ranges for labeling while a fetch is incomplete.
 2. Run `node scripts/history-labels.mjs status` and `node scripts/history-labels.mjs pending` to track progress. Assign a different batch to each Luna worker and use the [labeling instructions](scripts/history-labeling.md). Every saved row is validated and can be imported as soon as it is ready.
 3. Run `CI=1 npx convex dev --once`, then `node scripts/import-history.mjs` to upsert the checkpoints into `intent-marlin-697`. Keep `.pr-backfill/` in the same worktree to resume without relabeling results.
 

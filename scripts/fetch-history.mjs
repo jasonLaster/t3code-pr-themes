@@ -93,6 +93,51 @@ async function fetchRange(start, end, dateFilter, directory) {
   return result;
 }
 
+function preparePages(all, complete) {
+  const merged = [...all.values()].filter((row) => row.state === "MERGED").length;
+  const closed = all.size - merged;
+  const existing = readdirSync(pagesDir).filter((file) => /^\d{4}\.json$/.test(file)).sort();
+  let expected = all.size;
+  for (const file of existing) {
+    const page = read(`${pagesDir}/${file}`);
+    if (!complete) expected = Math.max(expected, page.totalCount);
+    for (const row of page.nodes) {
+      if (!all.delete(row.number) && complete) {
+        throw new Error(`Existing checkpoint PR #${row.number} is absent from the snapshot; inspect before replacing source data`);
+      }
+    }
+  }
+  const rows = [...all.values()].sort((a, b) => a.number - b.number);
+  for (let start = 0; start < rows.length; start += 100) {
+    const name = String(existing.length + start / 100 + 1).padStart(4, "0");
+    checkpoint(`${pagesDir}/${name}.json`, { nodes: rows.slice(start, start + 100), totalCount: expected,
+      pageInfo: { hasNextPage: !complete || start + 100 < rows.length } });
+  }
+  if (complete) {
+    if (!rows.length && existing.length) {
+      const path = `${pagesDir}/${existing.at(-1)}`;
+      checkpoint(path, { ...read(path), totalCount: expected, pageInfo: { hasNextPage: false } });
+    }
+    checkpoint(`${root}/inventory.json`, { cutoff, merged, closed });
+    console.log(`Snapshot at ${cutoff}: ${merged} merged and ${closed} closed without merge, ${requests} GitHub GraphQL requests, ${points} points this run`);
+  } else {
+    console.log(`Prepared ${rows.length} additional PRs for labeling from downloaded ranges`);
+  }
+}
+
+if (process.argv.includes("--prepare")) {
+  const available = new Map();
+  for (const directory of [indexedDir, remainingDir]) {
+    for (const file of readdirSync(directory).filter((name) => name.endsWith(".json"))) {
+      for (const row of read(`${directory}/${file}`)) {
+        if (row.closedAt && row.closedAt <= cutoff) available.set(row.number, row);
+      }
+    }
+  }
+  if (!existsSync(`${root}/inventory.json`)) preparePages(available, false);
+  process.exit(0);
+}
+
 // GitHub's search index omits the closed date for some PRs. Walk both halves
 // and use the timestamp and state on the PR record to build the snapshot.
 const end = Date.parse(cutoff.slice(0, 10));
@@ -120,27 +165,4 @@ await Promise.all(Array.from({ length: 6 }, async () => {
 }));
 if (failures.length) throw new Error(failures.join("\n"));
 
-const merged = [...all.values()].filter((row) => row.state === "MERGED").length;
-const closed = all.size - merged;
-const expected = all.size;
-const existing = readdirSync(pagesDir).filter((file) => /^\d{4}\.json$/.test(file)).sort();
-for (const file of existing) {
-  const page = read(`${pagesDir}/${file}`);
-  for (const row of page.nodes) {
-    if (!all.delete(row.number)) {
-      throw new Error(`Existing checkpoint PR #${row.number} is absent from the snapshot; inspect before replacing source data`);
-    }
-  }
-}
-checkpoint(`${root}/inventory.json`, { cutoff, merged, closed });
-const rows = [...all.values()].sort((a, b) => a.number - b.number);
-for (let start = 0; start < rows.length; start += 100) {
-  const name = String(existing.length + start / 100 + 1).padStart(4, "0");
-  checkpoint(`${pagesDir}/${name}.json`, { nodes: rows.slice(start, start + 100), totalCount: expected,
-    pageInfo: { hasNextPage: start + 100 < rows.length } });
-}
-if (!rows.length && existing.length) {
-  const path = `${pagesDir}/${existing.at(-1)}`;
-  checkpoint(path, { ...read(path), totalCount: expected, pageInfo: { hasNextPage: false } });
-}
-console.log(`Snapshot at ${cutoff}: ${merged} merged and ${closed} closed without merge, ${requests} GitHub GraphQL requests, ${points} points this run`);
+preparePages(all, true);
