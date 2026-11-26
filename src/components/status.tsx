@@ -10,10 +10,13 @@ import {
   MessageSquareWarningIcon,
   MinusIcon,
   TriangleAlertIcon,
+  UserCheckIcon,
+  UserXIcon,
+  EyeIcon,
   XIcon,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { MERGE_LABEL, MERGE_SHORT, REVIEW_LABEL, ciOf, crOf, mergeOf, stateOf, type CiStatus, type CrStatus, type Health, type MergeStatus } from "@/model";
+import { MERGE_LABEL, MERGE_SHORT, REVIEW_LABEL, ciOf, crOf, mergeOf, stateOf, type CiStatus, type CrStatus, type Health, type MergeStatus, type ReviewStatus } from "@/model";
 import type { Pr } from "@/sync";
 
 /** Minimalist rabbit-ear icon for CodeRabbit status indicators. */
@@ -251,6 +254,14 @@ export function MergeStatusIcon({ status, className }: { status: MergeStatus; cl
   if (status === "behind") return <ArrowDownIcon className={cls("text-(--status-warn)")} strokeWidth={2.2} aria-hidden="true" />;
   if (status === "unstable") return <TriangleAlertIcon className={cls("text-(--status-warn)")} strokeWidth={2.2} aria-hidden="true" />;
   if (status === "blocked") return <LockIcon className={cls("text-muted-foreground")} strokeWidth={2.2} aria-hidden="true" />;
+  return <MinusIcon className={cls("text-muted-foreground/50")} aria-hidden="true" />;
+}
+
+export function ReviewStatusIcon({ status, className }: { status: ReviewStatus; className?: string }) {
+  const cls = (color: string) => cn("size-3 shrink-0", color, className);
+  if (status === "approved") return <UserCheckIcon className={cls("text-(--status-pass)")} strokeWidth={2.2} aria-hidden="true" />;
+  if (status === "changes") return <UserXIcon className={cls("text-(--status-fail)")} strokeWidth={2.2} aria-hidden="true" />;
+  if (status === "required") return <EyeIcon className={cls("text-(--status-warn)")} strokeWidth={2.2} aria-hidden="true" />;
   return <MinusIcon className={cls("text-muted-foreground/50")} aria-hidden="true" />;
 }
 

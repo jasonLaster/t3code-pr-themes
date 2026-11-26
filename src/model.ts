@@ -57,7 +57,17 @@ export const MERGE_SHORT: Record<MergeStatus, string> = {
   unknown: "…",
 };
 export const mergeOf = (pr: Pr): MergeStatus => pr.merge ?? "unknown";
-export const REVIEW_LABEL = { approved: "Approved", changes: "Changes requested", required: "Review required" } as const;
+export type ReviewStatus = "approved" | "changes" | "required" | "none" | "syncing";
+export const REVIEW_STATUSES: ReviewStatus[] = ["approved", "changes", "required", "none", "syncing"];
+export const REVIEW_LABEL: Record<ReviewStatus, string> = {
+  approved: "Approved",
+  changes: "Changes requested",
+  required: "Review required",
+  none: "No review needed",
+  syncing: "Syncing",
+};
+/** GitHub's review decision. It arrives with the merge-status refresh, so until then it's "syncing". */
+export const reviewOf = (pr: Pr): ReviewStatus => pr.review ?? (pr.open && pr.merge === undefined ? "syncing" : "none");
 
 export type Health = "green" | "needs-work" | "running" | "none";
 export const HEALTH_ORDER: Health[] = ["green", "needs-work", "running", "none"];

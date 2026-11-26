@@ -1,7 +1,9 @@
 import { assess } from "./assessment";
 import {
   CalendarIcon,
+  CheckCheckIcon,
   CheckCircle2Icon,
+  CircleCheckBigIcon,
   CircleDashedIcon,
   CircleDotIcon,
   ClockIcon,
@@ -9,14 +11,19 @@ import {
   GitPullRequestClosedIcon,
   GitPullRequestIcon,
   HeartPulseIcon,
+  ListChecksIcon,
   LoaderIcon,
   MessageSquareWarningIcon,
+  MinusIcon,
+  PlusIcon,
   MessagesSquareIcon,
   RulerIcon,
   ShapesIcon,
+  StarIcon,
   ShieldCheckIcon,
   TagIcon,
   TagsIcon,
+  UserCheckIcon,
   UserIcon,
   UsersIcon,
   XCircleIcon,
@@ -25,7 +32,7 @@ import {
 import type { ReactNode } from "react";
 import { changePurpose, PR_LABELS, PR_STATES } from "../shared/history";
 import { Avatar, Dot, STATE_LABEL, TIER_LABEL, TierBadge, aliasOf } from "@/components/people";
-import { CiStatusIcon, CrStatusIcon, HealthDot, MergeStatusIcon } from "@/components/status";
+import { CiStatusIcon, CrStatusIcon, HealthDot, MergeStatusIcon, ReviewStatusIcon } from "@/components/status";
 import {
   ALIASES,
   CI_LABEL,
@@ -37,6 +44,8 @@ import {
   MERGE_LABEL,
   MERGE_STATUSES,
   OPENED_RANGE_RE,
+  REVIEW_LABEL,
+  REVIEW_STATUSES,
   THEMES,
   TIERS,
   WHO,
@@ -46,6 +55,7 @@ import {
   formatOpenedRange,
   healthOf,
   mergeOf,
+  reviewOf,
   stateOf,
   tierOf,
   whoOf,
@@ -258,6 +268,29 @@ const tagIcon = <TagIcon className="size-3.5 text-muted-foreground" aria-hidden=
 /** Check data only describes open PRs; history rows carry stale or no check data. */
 const openOnly = <T,>(pr: Pr, value: T) => (pr.open ? value : undefined);
 
+const LINE_RANGES: Range[] = [
+  { value: "0", label: "None", max: 1 },
+  { value: "1-49", label: "1–49 lines", max: 50 },
+  { value: "50-249", label: "50–249 lines", max: 250 },
+  { value: "250-999", label: "250–999 lines", max: 1000 },
+  { value: "1000+", label: "1,000+ lines", max: Infinity },
+];
+
+const SCORE_DOT = { pass: "bg-(--status-pass)", warn: "bg-(--status-warn)", fail: "bg-(--status-fail)" };
+function ScoreDot({ tone }: { tone: keyof typeof SCORE_DOT }) {
+  return <span aria-hidden="true" className={`inline-block size-2 shrink-0 rounded-full ${SCORE_DOT[tone]}`} />;
+}
+
+/** How far a PR has worked through CodeRabbit's threads. History rows report none. */
+function crProgress(pr: Pr) {
+  if (!pr.open || pr.cr === undefined) return "nothreads";
+  const total = pr.crTotal ?? 0;
+  const open = pr.crUnresolved ?? 0;
+  if (total === 0) return open > 0 ? "none" : "nothreads";
+  if (open === 0) return "all";
+  return open >= total ? "none" : "some";
+}
+
 export const FIELDS: Field[] = [
   {
     key: "benefit",
@@ -267,6 +300,17 @@ export const FIELDS: Field[] = [
     bucket: (pr) => String(assess(pr)?.total ?? "pending"),
     describe: (value) => ({ label: value === "pending" ? "Awaiting review" : `${value}/60` }),
   },
+  rangeField(
+    { key: "score", label: "Score band", plural: "score bands", icon: StarIcon, aliases: ["rating", "grade"] },
+    (pr) => assess(pr)?.total,
+    // Same cut-offs as the score pill's colors.
+    [
+      { value: "low", label: "Low · under 32", max: 32, leading: <ScoreDot tone="fail" /> },
+      { value: "mid", label: "Mid · 32–39", max: 40, leading: <ScoreDot tone="warn" /> },
+      { value: "high", label: "High · 40+", max: Infinity, leading: <ScoreDot tone="pass" /> },
+    ],
+    { value: "pending", label: "Awaiting review" },
+  ),
   {
     key: "state",
     label: "State",
@@ -319,6 +363,28 @@ export const FIELDS: Field[] = [
     ],
     { value: "unknown", label: "No checks", leading: <CiStatusIcon status="none" /> },
   ),
+  rangeField(
+    { key: "passed", label: "Passing checks", plural: "counts", icon: CircleCheckBigIcon, aliases: ["passing"] },
+    (pr) => openOnly(pr, pr.ci === undefined ? undefined : (pr.ciPassed ?? 0)),
+    [
+      { value: "0", label: "None passing", max: 1 },
+      { value: "1-9", label: "1–9 passing", max: 10, leading: <CiStatusIcon status="pass" /> },
+      { value: "10-19", label: "10–19 passing", max: 20, leading: <CiStatusIcon status="pass" /> },
+      { value: "20+", label: "20+ passing", max: Infinity, leading: <CiStatusIcon status="pass" /> },
+    ],
+    { value: "unknown", label: "No checks", leading: <CiStatusIcon status="none" /> },
+  ),
+  rangeField(
+    { key: "checkcount", label: "Total checks", plural: "counts", icon: ListChecksIcon, aliases: ["nchecks", "totalchecks"] },
+    (pr) => openOnly(pr, pr.ci === undefined ? undefined : (pr.ciPassed ?? 0) + (pr.ciFailed ?? 0) + (pr.ciPending ?? 0)),
+    [
+      { value: "0", label: "No checks ran", max: 1 },
+      { value: "1-9", label: "1–9 checks", max: 10 },
+      { value: "10-19", label: "10–19 checks", max: 20 },
+      { value: "20+", label: "20+ checks", max: Infinity },
+    ],
+    { value: "unknown", label: "Not synced", leading: <CiStatusIcon status="none" /> },
+  ),
   {
     key: "cr",
     label: "CodeRabbit",
@@ -360,6 +426,62 @@ export const FIELDS: Field[] = [
     ],
     { value: "unknown", label: "Not reviewed", leading: <CrStatusIcon status="none" /> },
   ),
+  {
+    key: "addressed",
+    label: "CodeRabbit progress",
+    plural: "progress states",
+    icon: CheckCheckIcon,
+    aliases: ["crprogress", "resolution"],
+    bucket: (pr) => crProgress(pr),
+    values: () => [
+      { value: "all", label: "All comments resolved", leading: <CrStatusIcon status="clean" /> },
+      { value: "some", label: "Some resolved", leading: <CrStatusIcon status="comments" /> },
+      { value: "none", label: "None resolved", leading: <CrStatusIcon status="error" /> },
+      { value: "nothreads", label: "No comments", leading: <CrStatusIcon status="none" /> },
+    ],
+    valueAliases: { done: "all", resolved: "all", partial: "some", untouched: "none", empty: "nothreads" },
+  },
+  rangeField(
+    { key: "resolved", label: "Resolved CodeRabbit comments", plural: "counts", icon: CheckCheckIcon, aliases: ["crresolved"] },
+    (pr) => openOnly(pr, pr.cr === undefined ? undefined : Math.max(0, (pr.crTotal ?? 0) - (pr.crUnresolved ?? 0))),
+    [
+      { value: "0", label: "None resolved", max: 1 },
+      { value: "1-2", label: "1–2 resolved", max: 3, leading: <CrStatusIcon status="clean" /> },
+      { value: "3-9", label: "3–9 resolved", max: 10, leading: <CrStatusIcon status="clean" /> },
+      { value: "10+", label: "10+ resolved", max: Infinity, leading: <CrStatusIcon status="clean" /> },
+    ],
+    { value: "unknown", label: "Not reviewed", leading: <CrStatusIcon status="none" /> },
+  ),
+  rangeField(
+    { key: "crtotal", label: "All CodeRabbit comments", plural: "counts", icon: MessagesSquareIcon, aliases: ["crthreads", "crcomments"] },
+    (pr) => openOnly(pr, pr.cr === undefined ? undefined : (pr.crTotal ?? 0)),
+    [
+      { value: "0", label: "No comments", max: 1 },
+      { value: "1-2", label: "1–2 comments", max: 3 },
+      { value: "3-9", label: "3–9 comments", max: 10 },
+      { value: "10+", label: "10+ comments", max: Infinity },
+    ],
+    { value: "unknown", label: "Not reviewed", leading: <CrStatusIcon status="none" /> },
+  ),
+  {
+    key: "review",
+    label: "Review decision",
+    plural: "review decisions",
+    icon: UserCheckIcon,
+    aliases: ["approval", "reviews"],
+    bucket: (pr) => reviewOf(pr),
+    values: () => REVIEW_STATUSES.map((s) => ({ value: s, label: REVIEW_LABEL[s], leading: <ReviewStatusIcon status={s} /> })),
+    valueAliases: {
+      approve: "approved",
+      lgtm: "approved",
+      "changes-requested": "changes",
+      requested: "changes",
+      needed: "required",
+      "needs-review": "required",
+      pending: "required",
+      unknown: "syncing",
+    },
+  },
   {
     key: "health",
     label: "Check health",
@@ -457,6 +579,22 @@ export const FIELDS: Field[] = [
     { value: "l", label: "L · 250–999 lines", max: 1000 },
     { value: "xl", label: "XL · 1,000+ lines", max: Infinity },
   ]),
+  rangeField({ key: "additions", label: "Lines added", plural: "ranges", icon: PlusIcon, aliases: ["added", "adds"] }, (pr) => pr.additions, LINE_RANGES),
+  rangeField({ key: "deletions", label: "Lines removed", plural: "ranges", icon: MinusIcon, aliases: ["removed", "dels"] }, (pr) => pr.deletions, LINE_RANGES),
+  {
+    key: "balance",
+    label: "Net change",
+    plural: "net changes",
+    icon: RulerIcon,
+    aliases: ["net"],
+    bucket: (pr) => (pr.deletions > pr.additions ? "shrinks" : pr.additions > pr.deletions ? "grows" : "even"),
+    values: () => [
+      { value: "grows", label: "Adds more than it removes", leading: <PlusIcon className="size-3.5 text-(--status-pass)" aria-hidden="true" /> },
+      { value: "shrinks", label: "Removes more than it adds", leading: <MinusIcon className="size-3.5 text-(--status-fail)" aria-hidden="true" /> },
+      { value: "even", label: "Even", hideEmpty: true },
+    ],
+    valueAliases: { positive: "grows", negative: "shrinks", cleanup: "shrinks" },
+  },
   dateField({ key: "opened", label: "Created", icon: CalendarIcon, aliases: ["created", "age"], get: (pr) => pr.createdAt }),
   dateField({ key: "updated", label: "Updated", icon: ClockIcon, aliases: ["active", "activity"], get: (pr) => pr.updatedAt }),
   dateField({ key: "merged", label: "Merged", icon: GitMergeIcon, history: true, get: (pr) => ("mergedAt" in pr ? pr.mergedAt : undefined) }),
