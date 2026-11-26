@@ -10,6 +10,7 @@
 
 import type * as crons from "../crons.js";
 import type * as github from "../github.js";
+import type * as prHistory from "../prHistory.js";
 import type * as prs from "../prs.js";
 
 import type {
@@ -21,6 +22,7 @@ import type {
 declare const fullApi: ApiFromModules<{
   crons: typeof crons;
   github: typeof github;
+  prHistory: typeof prHistory;
   prs: typeof prs;
 }>;
 

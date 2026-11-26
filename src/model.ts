@@ -1,3 +1,4 @@
+import { PR_STATES, type PrState } from "../shared/history";
 import { THEME_LIST } from "../shared/themes";
 import type { Pr } from "./sync";
 
@@ -41,7 +42,7 @@ export const RANGES = [
   { value: "90d", label: "Last 3 months" },
 ];
 
-export const FILTER_KEYS = ["author", "theme", "tier", "type", "opened", "is"] as const;
+export const FILTER_KEYS = ["author", "theme", "tier", "type", "opened", "is", "state", "label"] as const;
 export type FilterKey = (typeof FILTER_KEYS)[number];
 const KEY_ALIASES: Record<string, FilterKey> = { by: "author", th: "theme", kind: "type", age: "opened" };
 /** Keys that hold a single value; setting one replaces the previous value. */
@@ -60,6 +61,21 @@ export function parseQuery(q: string) {
   }
   return { tokens, words };
 }
+
+export function requestedStates(q: string): PrState[] {
+  const { tokens } = parseQuery(q);
+  const stateTokens = tokens.filter((t) => t.key === "state");
+  if (!stateTokens.length) {
+    return tokens.some((t) => t.key === "label" && !t.neg) ? ["merged", "closed"] : ["open"];
+  }
+  const included = stateTokens.filter((t) => !t.neg);
+  return PR_STATES.filter((state) =>
+    (!included.length || included.some((t) => t.value === state)) &&
+    !stateTokens.some((t) => t.neg && t.value === state),
+  );
+}
+
+export const stateOf = (pr: Pr): PrState => "state" in pr ? pr.state : "open";
 
 const tokenText = (t: Token) => `${t.neg ? "-" : ""}${t.key}:${/\s/.test(t.value) ? `"${t.value}"` : t.value}`;
 
@@ -101,7 +117,11 @@ function test(pr: Pr, key: FilterKey, value: string, contributors: Contributors,
       return tier === value || (value === "unvouched" && tier === "community");
     }
     case "type":
-      return pr.kind === value;
+      return (pr.kind || "other") === value;
+    case "state":
+      return stateOf(pr) === value;
+    case "label":
+      return "labels" in pr && pr.labels.some((label) => label === value);
     case "opened": {
       const m = value.match(/^(\d+)([dwmh])$/);
       if (!m) return true;

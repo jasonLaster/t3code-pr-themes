@@ -3,6 +3,7 @@ import {
   ArrowUpRightIcon,
   CalendarIcon,
   CircleDashedIcon,
+  CircleDotIcon,
   ListFilterIcon,
   SearchIcon,
   ShapesIcon,
@@ -13,6 +14,7 @@ import {
 } from "lucide-react";
 import { lazy, memo, Suspense, useDeferredValue, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { api } from "../convex/_generated/api";
+import { PR_LABELS, PR_STATES } from "../shared/history";
 import { CommandPalette } from "@/components/command-palette";
 import { DisplayMenu } from "@/components/display";
 import { FilterChips, FilterMenu, type Facet } from "@/components/filters";
@@ -33,8 +35,10 @@ import {
   isActive,
   makeMatcher,
   parseQuery,
+  requestedStates,
   serialize,
   setOnly,
+  stateOf,
   themeSlug,
   tierOf,
   toggleToken,
@@ -45,13 +49,15 @@ import {
   type Tier,
   type Who,
 } from "@/model";
-import { useRevalidateOnView, useSyncedPrs, type Pr } from "@/sync";
+import { isHistorical, useHistory, useRevalidateOnView, useSyncedPrs, type Pr } from "@/sync";
 
 // The markdown stack is most of the bundle; load it when a PR is first opened.
 const Description = lazy(() => import("@/Description").then((m) => ({ default: m.Description })));
 
 const prUrl = (n: number) => `https://github.com/pingdotgg/t3code/pull/${n}`;
 const fmt = (n: number) => n.toLocaleString();
+const STATE_LABEL = { open: "Open", merged: "Merged", closed: "Closed" } as const;
+const HISTORY_ROW_PAGE = 200;
 const TIER_LABEL: Record<Tier, string> = { maintainer: "Maintainer", vouched: "Vouched", community: "Unvouched", denounced: "Denounced" };
 const aliasOf = (login: string) => Object.entries(ALIASES).find(([, l]) => l === login.toLowerCase())?.[0];
 
@@ -201,6 +207,20 @@ export function App() {
   const filterRef = useRef<HTMLDivElement>(null);
   const displayRef = useRef<HTMLDivElement>(null);
   const deferredQ = useDeferredValue(q);
+  const states = useMemo(() => requestedStates(deferredQ), [deferredQ]);
+  const showMerged = states.includes("merged");
+  const showClosed = states.includes("closed");
+  const showHistory = showMerged || showClosed;
+  const showOpen = states.includes("open");
+  const merged = useHistory("merged", showMerged);
+  const closed = useHistory("closed", showClosed);
+  const historyLoading = merged.loading || closed.loading;
+  const snapshot = useQuery(api.prHistory.snapshot, showHistory ? {} : "skip");
+  const historyIncomplete = !snapshot ||
+    (showMerged && merged.rows.length < snapshot.merged) ||
+    (showClosed && closed.rows.length < snapshot.closed);
+  const [historyLimit, setHistoryLimit] = useState(HISTORY_ROW_PAGE);
+  useEffect(() => setHistoryLimit(HISTORY_ROW_PAGE), [deferredQ, group, sort]);
 
   useEffect(() => {
     const p = new URLSearchParams();
@@ -216,7 +236,12 @@ export function App() {
     () => new Map((contributorList ?? []).map((c) => [c.login, { tier: c.tier, reason: c.reason }])),
     [contributorList],
   );
-  const all = useMemo(() => (rows ? [...rows.values()] : []), [rows]);
+  const all = useMemo<Pr[]>(() => {
+    const open = showOpen && rows ? [...rows.values()] : [];
+    if (!showHistory || historyLoading || !rows) return open;
+    return [...open, ...(showMerged ? merged.rows : []), ...(showClosed ? closed.rows : [])]
+      .filter((pr) => pr.open || !rows.has(pr.number));
+  }, [rows, showOpen, showHistory, historyLoading, showMerged, merged.rows, showClosed, closed.rows]);
   const asOf = status?.fetchedAt ?? now;
 
   // Typing `author:theo ` in the search box turns the finished token into a filter chip.
@@ -262,9 +287,20 @@ export function App() {
     return entries;
   }, [filtered, group, contributors]);
 
-  const visible = useMemo(() => groups.flatMap(([k, list]) => (collapsed.has(k) ? [] : list)), [groups, collapsed]);
-  const paneRow = pane ? (rows?.get(pane) ?? null) : null;
-  const selectedRow = selected ? (rows?.get(selected) ?? null) : null;
+  const visibleGroups = useMemo(() => {
+    if (!showHistory) return groups;
+    let remaining = historyLimit;
+    return groups.flatMap(([key, list]): [string, Pr[]][] => {
+      if (remaining <= 0) return [];
+      if (collapsed.has(key)) return [[key, list]];
+      const visibleRows = list.slice(0, remaining);
+      remaining -= visibleRows.length;
+      return [[key, visibleRows]];
+    });
+  }, [groups, showHistory, historyLimit, collapsed]);
+  const visible = useMemo(() => visibleGroups.flatMap(([key, list]) => collapsed.has(key) ? [] : list), [visibleGroups, collapsed]);
+  const paneRow = pane ? all.find((pr) => pr.number === pane) : undefined;
+  const selectedRow = selected ? all.find((pr) => pr.number === selected) ?? null : null;
 
   const openPr = (n: number) => {
     setSelected(n);
@@ -339,9 +375,31 @@ export function App() {
     const tiers = countBy((pr) => tierOf(pr.author, contributors));
     const themes = countBy((pr) => pr.theme);
     const kinds = [...countBy((pr) => pr.kind || "other")].sort((a, b) => b[1] - a[1]);
+    const stateCounts = countBy(stateOf);
+    const labels = new Map<string, number>();
+    for (const pr of all) {
+      if ("labels" in pr) for (const label of pr.labels) labels.set(label, (labels.get(label) ?? 0) + 1);
+    }
     const drafts = all.filter((pr) => pr.draft).length;
     const tierWho: Record<Tier, Who> = { maintainer: "maintainer", vouched: "vouched", community: "community", denounced: "community" };
     return [
+      {
+        key: "state",
+        label: "State",
+        plural: "states",
+        icon: CircleDotIcon,
+        values: PR_STATES.map((state) => ({
+          value: state, label: STATE_LABEL[state],
+          count: state === "open" ? rows?.size : states.includes(state) && !historyLoading ? stateCounts.get(state) ?? 0 : undefined,
+        })),
+      },
+      {
+        key: "label",
+        label: "Label",
+        plural: "labels",
+        icon: TagIcon,
+        values: PR_LABELS.map((label) => ({ value: label, label, count: labels.get(label) })),
+      },
       {
         key: "author",
         label: "Author",
@@ -393,7 +451,7 @@ export function App() {
         ],
       },
     ];
-  }, [all, contributors, asOf]);
+  }, [all, contributors, asOf, states, rows, historyLoading]);
 
   const { tokens } = parseQuery(q);
   const people = tokens.filter((t) => t.key === "author" || t.key === "tier");
@@ -428,8 +486,8 @@ export function App() {
     return m;
   }, [all]);
 
-  const loading = rows === null || (rows.size === 0 && !status?.fetchedAt);
-  const title = activeView?.label ?? "Filtered";
+  const loading = historyLoading || rows === null || (showOpen && rows.size === 0 && !status?.fetchedAt);
+  const title = showHistory ? "Pull request history" : activeView?.label ?? "Filtered";
 
   return (
     <div className="flex h-dvh overflow-hidden bg-sidebar text-foreground">
@@ -501,7 +559,7 @@ export function App() {
       <div className="flex min-w-0 flex-1 flex-col overflow-hidden bg-background md:my-2 md:mr-2 md:rounded-xl md:border md:border-border">
         <header className="flex h-11 shrink-0 items-center gap-2 border-b border-border px-4">
           <h1 className="truncate text-[13px] font-[510]">{title}</h1>
-          <span className="text-xs text-muted-foreground tabular-nums">{fmt(filtered.length)}</span>
+          <span className="text-xs text-muted-foreground tabular-nums">{loading ? "" : fmt(filtered.length)}</span>
           <div className="relative ml-auto hidden w-64 sm:block">
             <SearchIcon className="pointer-events-none absolute top-1/2 left-2 size-3.5 -translate-y-1/2 text-muted-foreground" aria-hidden="true" />
             <input
@@ -554,7 +612,15 @@ export function App() {
 
         <div className="flex min-h-0 flex-1">
           <main ref={listRef} className="@container min-w-0 flex-1 overflow-y-auto" aria-label="Pull requests">
-            {insights && filtered.length > 0 && (
+            {showHistory && !loading && historyIncomplete && (
+              <p className="border-b border-border px-6 py-2 text-xs text-muted-foreground">
+                History backfill in progress
+                {snapshot ? ` · ${fmt(merged.rows.length + closed.rows.length)} of ${fmt(
+                  (showMerged ? snapshot.merged : 0) + (showClosed ? snapshot.closed : 0),
+                )} PRs loaded` : ""}
+              </p>
+            )}
+            {insights && !loading && filtered.length > 0 && (
               <section className="space-y-4 border-b border-border px-6 py-4" aria-label="Insights">
                 <div className="flex flex-wrap gap-x-7 gap-y-2">
                   {WHO.map((w) => (
@@ -567,7 +633,7 @@ export function App() {
                     </div>
                   ))}
                 </div>
-                <div className="grid gap-px" role="table" aria-label="Open pull requests by theme">
+                <div className="grid gap-px" role="table" aria-label="Pull requests by theme">
                   {themeBars.map(({ theme, r, total }) => (
                     <button
                       key={theme}
@@ -594,14 +660,14 @@ export function App() {
             )}
 
             {loading ? (
-              <p className="p-6 text-[13px] text-muted-foreground">Loading pull requests…</p>
+              <p className="p-6 text-[13px] text-muted-foreground">{showHistory ? "Loading pull request history…" : "Loading pull requests…"}</p>
             ) : filtered.length === 0 ? (
               <div className="grid place-items-center gap-3 p-16 text-center text-[13px] text-muted-foreground">
                 No pull requests match these filters.
                 <Button size="sm" onClick={clearAll}>Clear filters</Button>
               </div>
             ) : (
-              groups.map(([key, list]) => (
+              visibleGroups.map(([key, list]) => (
                 <section key={key}>
                   <button
                     aria-expanded={!collapsed.has(key)}
@@ -620,7 +686,7 @@ export function App() {
                     {group === "theme" && <TagIcon className="size-3.5 text-muted-foreground" aria-hidden="true" />}
                     <span className="font-[510]">{key}</span>
                     {group === "author" && <TierBadge tier={tierOf(key, contributors)} />}
-                    <span className="text-muted-foreground tabular-nums">{fmt(list.length)}</span>
+                    <span className="text-muted-foreground tabular-nums">{fmt(groups.find(([name]) => name === key)?.[1].length ?? list.length)}</span>
                   </button>
                   {!collapsed.has(key) &&
                     list.map((pr) => (
@@ -637,6 +703,12 @@ export function App() {
                     ))}
                 </section>
               ))
+            )}
+            {showHistory && !loading && visible.length < groups.reduce((sum, [key, list]) =>
+              sum + (collapsed.has(key) ? 0 : list.length), 0) && (
+              <Button variant="ghost" size="sm" className="m-4" onClick={() => setHistoryLimit((limit) => limit + HISTORY_ROW_PAGE)}>
+                Show more pull requests
+              </Button>
             )}
           </main>
 
@@ -680,7 +752,25 @@ export function App() {
                       </button>
                     </dd>
                     <dt className="text-muted-foreground">Status</dt>
-                    <dd>{paneRow.draft ? "Draft" : "Ready for review"}</dd>
+                    <dd>{paneRow.open ? (paneRow.draft ? "Draft" : "Ready for review") : STATE_LABEL[stateOf(paneRow)]}</dd>
+                    {isHistorical(paneRow) && (
+                      <>
+                        <dt className="text-muted-foreground">{STATE_LABEL[paneRow.state]} on</dt>
+                        <dd>{new Date(paneRow.mergedAt ?? paneRow.closedAt).toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" })}</dd>
+                        {paneRow.labels.length > 0 && (
+                          <>
+                            <dt className="text-muted-foreground">Labels</dt>
+                            <dd className="flex flex-wrap gap-1">
+                              {paneRow.labels.map((label) => (
+                                <Button key={label} variant="outline" size="sm" onClick={() => setQ((cur) => toggleToken(cur, "label", label))}>
+                                  {label}
+                                </Button>
+                              ))}
+                            </dd>
+                          </>
+                        )}
+                      </>
+                    )}
                     <dt className="text-muted-foreground">Opened</dt>
                     <dd>{new Date(paneRow.createdAt).toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" })}</dd>
                     <dt className="text-muted-foreground">Updated</dt>
@@ -690,13 +780,15 @@ export function App() {
                       <span className="text-(--maintainer)">+{fmt(paneRow.additions)}</span> <span className="text-destructive/80">−{fmt(paneRow.deletions)}</span>
                     </dd>
                   </dl>
-                  <Suspense fallback={<p className="text-[13px] text-muted-foreground">Loading description…</p>}>
-                    <Description number={paneRow.number} />
-                  </Suspense>
+                  {paneRow.open && (
+                    <Suspense fallback={<p className="text-[13px] text-muted-foreground">Loading description…</p>}>
+                      <Description number={paneRow.number} />
+                    </Suspense>
+                  )}
                 </>
               ) : (
                 <p className="text-[13px] text-muted-foreground">
-                  PR #{pane} is no longer open.{" "}
+                  {loading ? "Loading pull request…" : `PR #${pane} is unavailable in this view.`}{" "}
                   <button className="underline" onClick={() => setPane(null)}>Close</button>
                 </p>
               )}
@@ -744,7 +836,7 @@ export function App() {
           <p className="mt-4 mb-1 font-[510]">Typing filters</p>
           <p className="text-muted-foreground">
             In search, type <code>author:theo</code>, <code>tier:vouched</code>, <code>theme:mobile</code>, <code>type:feat</code>, <code>opened:7d</code> or{" "}
-            <code>is:draft</code>, then a space. Prefix with <code>-</code> to exclude. Tiers come from <code>.github/VOUCHED.td</code> and{" "}
+            <code>is:draft</code>, <code>state:merged</code> or <code>label:codex</code>, then a space. Prefix with <code>-</code> to exclude. Tiers come from <code>.github/VOUCHED.td</code> and{" "}
             <code>.github/TRIAGE_EXEMPTIONS.td</code>.
           </p>
         </DialogContent>
