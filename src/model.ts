@@ -166,6 +166,22 @@ const CR_VALUE_ALIASES: Record<string, CrStatus> = {
   reviewing: "pending",
 };
 
+export const OPENED_RANGE_RE = /^(\d{4}-\d{2}-\d{2})\.\.(\d{4}-\d{2}-\d{2})$/;
+
+export function formatOpenedRange(value: string) {
+  const m = value.match(OPENED_RANGE_RE);
+  if (!m) return null;
+  const start = new Date(`${m[1]}T00:00:00Z`);
+  const end = new Date(`${m[2]}T00:00:00Z`);
+  const fmtDay = (d: Date, year = false) =>
+    d.toLocaleDateString("en-US", { month: "short", day: "numeric", ...(year ? { year: "numeric" } : {}), timeZone: "UTC" });
+  const sameYear = start.getUTCFullYear() === end.getUTCFullYear();
+  const thisYear = new Date().getUTCFullYear();
+  if (sameYear && start.getUTCFullYear() === thisYear) return `${fmtDay(start)} – ${fmtDay(end)}`;
+  if (sameYear) return `${fmtDay(start)} – ${fmtDay(end, true)}`;
+  return `${fmtDay(start, true)} – ${fmtDay(end, true)}`;
+}
+
 function test(pr: Pr, key: FilterKey, value: string, contributors: Contributors, now: number) {
   switch (key) {
     case "author":
@@ -179,6 +195,11 @@ function test(pr: Pr, key: FilterKey, value: string, contributors: Contributors,
     case "type":
       return pr.kind === value;
     case "opened": {
+      const range = value.match(OPENED_RANGE_RE);
+      if (range) {
+        const ts = Date.parse(pr.createdAt);
+        return ts >= Date.parse(`${range[1]}T00:00:00Z`) && ts <= Date.parse(`${range[2]}T23:59:59.999Z`);
+      }
       const m = value.match(/^(\d+)([dwmh])$/);
       if (!m) return true;
       const unit = { h: 36e5, d: 864e5, w: 7 * 864e5, m: 30 * 864e5 }[m[2] as "h" | "d" | "w" | "m"];
@@ -239,6 +260,74 @@ export const SORT_LABEL: Record<SortBy, string> = {
 const HEALTH_RANK_GREEN_FIRST: Record<Health, number> = { green: 0, running: 1, none: 2, "needs-work": 3 };
 const HEALTH_RANK_WORK_FIRST: Record<Health, number> = { "needs-work": 0, running: 1, none: 2, green: 3 };
 const workSeverity = (pr: Pr) => (ciOf(pr) === "fail" ? 1000 + (pr.ciFailed ?? 1) * 10 : 0) + (pr.crUnresolved ?? 0);
+
+export type ViewMode = "list" | "insights";
+export type Measure = "count" | "lines";
+export type SliceBy = "theme" | "author" | "tier" | "type" | "opened";
+export type SegmentBy = "who" | "none";
+
+export const MEASURE_LABEL: Record<Measure, string> = { count: "PR count", lines: "Lines changed" };
+export const SLICE_LABEL: Record<SliceBy, string> = {
+  theme: "Theme",
+  author: "Author",
+  tier: "Contributor tier",
+  type: "Type",
+  opened: "Opened (by week)",
+};
+export const SEGMENT_LABEL: Record<SegmentBy, string> = { who: "Contributor", none: "None" };
+
+export function groupToSlice(group: GroupBy): SliceBy {
+  if (group === "who") return "tier";
+  if (group === "author") return "author";
+  return "theme";
+}
+
+export function applyWhoFilter(q: string, who: Who) {
+  const { tokens, words } = parseQuery(q);
+  const kept = tokens.filter((t) => t.key !== "author" && t.key !== "tier");
+  const added: Token[] =
+    who === "julius"
+      ? [{ neg: false, key: "author", value: "julius" }]
+      : who === "theo"
+        ? [{ neg: false, key: "author", value: "theo" }]
+        : who === "maintainer"
+          ? [
+              { neg: false, key: "tier", value: "maintainer" },
+              { neg: true, key: "author", value: "julius" },
+              { neg: true, key: "author", value: "theo" },
+            ]
+          : who === "vouched"
+            ? [{ neg: false, key: "tier", value: "vouched" }]
+            : [
+                { neg: true, key: "tier", value: "maintainer" },
+                { neg: true, key: "tier", value: "vouched" },
+              ];
+  return serialize([...kept, ...added], words);
+}
+
+export function applyInsightDrillDown(q: string, slice: SliceBy, filterValue: string, who?: Who) {
+  let next = setOnly(q, [slice], { neg: false, key: slice, value: filterValue });
+  if (who && slice !== "author") {
+    if (slice === "tier") {
+      if (who === "julius" || who === "theo") {
+        next = setOnly(next, ["author"], { neg: false, key: "author", value: who });
+      } else if (who === "maintainer") {
+        const { tokens, words } = parseQuery(next);
+        next = serialize(
+          [
+            ...tokens.filter((t) => t.key !== "author"),
+            { neg: true, key: "author", value: "julius" },
+            { neg: true, key: "author", value: "theo" },
+          ],
+          words,
+        );
+      }
+    } else {
+      next = applyWhoFilter(next, who);
+    }
+  }
+  return next;
+}
 
 export const SORTERS: Record<SortBy, (a: Pr, b: Pr) => number> = {
   created: (a, b) => b.number - a.number,

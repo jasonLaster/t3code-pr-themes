@@ -3,7 +3,7 @@ import { useState, type ReactNode } from "react";
 import { Command, CommandEmpty, CommandGroup, CommandGroupLabel, CommandInput, CommandItem, CommandList, CommandPage } from "@/components/ui/command";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { cn } from "@/lib/utils";
-import { flipGroup, isActive, parseQuery, removeGroup, toggleToken, type FilterKey } from "@/model";
+import { flipGroup, formatOpenedRange, isActive, parseQuery, removeGroup, toggleToken, type FilterKey } from "@/model";
 
 export type FacetValue = { value: string; label: string; count: number; leading?: ReactNode };
 export type Facet = {
@@ -156,8 +156,10 @@ export function FilterChips({ facets, q, setQ }: { facets: Facet[]; q: string; s
     <>
       {groups.map(({ key, neg, values }) => {
         const facet = facets.find((f) => f.key === key)!;
-        const labelOf = (v: string) => facet.values.find((x) => x.value === v)?.label ?? v;
-        const op = facet.single ? "within" : values.length > 1 ? (neg ? "is none of" : "is any of") : neg ? "is not" : "is";
+        const labelOf = (v: string) =>
+          (key === "opened" ? formatOpenedRange(v) : null) ?? facet.values.find((x) => x.value === v)?.label ?? v;
+        const isDateRange = key === "opened" && values.length === 1 && formatOpenedRange(values[0]) !== null;
+        const op = isDateRange ? "during" : facet.single ? "within" : values.length > 1 ? (neg ? "is none of" : "is any of") : neg ? "is not" : "is";
         return (
           <div
             key={`${key}${neg}`}
