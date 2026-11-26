@@ -143,6 +143,7 @@ function readUrl() {
 type RowProps = { pr: Pr; who: Who; tier: Tier; selected: boolean; showTheme: boolean; now: number; onOpen: (n: number) => void };
 
 const Row = memo(function Row({ pr, who, tier, selected, showTheme, now, onOpen }: RowProps) {
+  const rating = assess(pr);
   return (
     <div
       data-n={pr.number}
@@ -156,7 +157,11 @@ const Row = memo(function Row({ pr, who, tier, selected, showTheme, now, onOpen 
         <PrStateIcon pr={pr} className="mr-1.5 inline align-[-2px]" />
         {pr.title}
       </span>
-      {(!isHistorical(pr) || pr.state === "closed") && <span className="shrink-0 text-xs text-muted-foreground" title={assess(pr).benefitReason}>Benefit · {assess(pr).benefit}</span>}
+      {rating && (
+        <Badge className="shrink-0" title={`Reviewed revision ${rating.head.slice(0, 7)} · ${rating.total}/60`}>
+          <span className="sr-only">PR review score </span>{rating.total}/60
+        </Badge>
+      )}
       {showTheme && (
         <Badge className="hidden h-[22px] max-w-44 shrink-0 gap-1.5 truncate px-2 @5xl:inline-flex">
           <TagIcon className="size-3" aria-hidden="true" />
@@ -195,23 +200,26 @@ const Row = memo(function Row({ pr, who, tier, selected, showTheme, now, onOpen 
 
 function Assessment({ pr }: { pr: Pr }) {
   const scores = assess(pr);
-  const body = useQuery(api.prs.description, isHistorical(pr) ? "skip" : { number: pr.number });
-  const qaEvidence = body?.split("\n").find(line =>
-    /(?:regression test|tests? pass|fail(?:s|ed)? on (?:base|main)|manually (?:tested|verified))/i.test(line)
-    && !/\[ \]/.test(line)
-  )?.replace(/^[-* ]+/, "").slice(0, 240);
-  return <section className="my-3 rounded-md border p-3 text-sm">
-    <h3 className="mb-2 font-semibold">PR value assessment</h3>
-    <dl className="grid grid-cols-[auto_1fr] gap-x-4 gap-y-1">
-      <dt>Benefit</dt><dd>{scores.benefit}. {scores.benefitReason}</dd>
-      <dt>Reach</dt><dd>{scores.reach}</dd>
-      <dt>Code quality</dt><dd>{isHistorical(pr) && !pr.review && !pr.crUnresolved ? "Review evidence unavailable in archive" : scores.code}</dd>
-      <dt>QA evidence</dt><dd>{isHistorical(pr) && !pr.ci ? "QA evidence unavailable in archive" : scores.qa}{qaEvidence && <p className="text-muted-foreground">PR description · {qaEvidence}</p>}</dd>
-    </dl>
-    <details className="mt-2 text-xs text-muted-foreground"><summary className="cursor-pointer">Scoring rubric and evidence limits</summary>
-      {rubric.map(line => <p className="mt-2" key={line}>{line}</p>)}
-    </details>
-  </section>;
+  return (
+    <section className="my-3 rounded-md border p-3 text-sm">
+      <h3 className="mb-2 font-semibold">PR review {scores && `· ${scores.total}/60`}</h3>
+      {scores ? (
+        <>
+          <a className="underline" href={`${prUrl(pr.number)}/files/${scores.head}`}>Reviewed revision {scores.head.slice(0, 7)}</a>
+          <dl>{scores.grades.map(([score, evidence], index) => (
+            <div className="mt-2" key={rubric[index][0]}>
+              <dt className="font-medium">{rubric[index][0]} · {score}/10</dt>
+              <dd>{evidence}</dd>
+            </div>
+          ))}</dl>
+        </>
+      ) : <p>Awaiting code and QA review.</p>}
+      <details className="mt-2 text-xs text-muted-foreground">
+        <summary className="cursor-pointer">Scoring rubric · six equally weighted dimensions</summary>
+        {rubric.map(([name, guide]) => <p className="mt-2" key={name}><strong>{name}. </strong>{guide}</p>)}
+      </details>
+    </section>
+  );
 }
 
 const VIEWS: { label: string; who?: Who; tier?: Tier; author?: string }[] = [
@@ -1129,7 +1137,7 @@ export function App() {
                       <span className="text-(--maintainer)">+{fmt(paneRow.additions)}</span> <span className="text-destructive/80">−{fmt(paneRow.deletions)}</span>
                     </dd>
                   </dl>
-                  {(paneRow.open || stateOf(paneRow) === "closed") && <Assessment pr={paneRow} />}
+                  <Assessment pr={paneRow} />
                   {paneRow.open && paneChecksAvailable && <ChecksPanel pr={paneRow} />}
                   {paneRow.open && (
                     <SegmentedControl

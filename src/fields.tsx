@@ -260,9 +260,12 @@ const openOnly = <T,>(pr: Pr, value: T) => (pr.open ? value : undefined);
 
 export const FIELDS: Field[] = [
   {
-    key: "benefit", label: "Estimated benefit", plural: "Benefit levels", icon: HeartPulseIcon,
-    bucket: pr => "state" in pr && pr.state === "merged" ? "historical" : assess(pr).benefit.toLowerCase(),
-    values: () => ["High", "Moderate", "Modest", "Unrated", "Historical"].map(label => ({ value: label.toLowerCase(), label })),
+    key: "benefit",
+    label: "Review score",
+    plural: "review scores",
+    icon: HeartPulseIcon,
+    bucket: (pr) => String(assess(pr)?.total ?? "pending"),
+    describe: (value) => ({ label: value === "pending" ? "Awaiting review" : `${value}/60` }),
   },
   {
     key: "state",
