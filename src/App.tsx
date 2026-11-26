@@ -9,8 +9,11 @@ import {
   CircleDashedIcon,
   ClockIcon,
   FileTextIcon,
+  GitMergeIcon,
+  GitPullRequestClosedIcon,
   GitPullRequestDraftIcon,
   GitPullRequestIcon,
+  LayersIcon,
   ListFilterIcon,
   ListIcon,
   MessageSquareIcon,
@@ -30,7 +33,10 @@ import { FilterChips, FilterMenu, type Facet } from "@/components/filters";
 import {
   CiBadge,
   CrBadge,
+  MergeBadge,
+  PrStateIcon,
   RabbitIcon,
+  mergeTooltip,
   ciSummaryText,
   crSummaryText,
 } from "@/components/status";
@@ -51,6 +57,7 @@ import {
   ciOf,
   crOf,
   groupToSlice,
+  mergeOf,
   stateOf,
   themeSlug,
   tierOf,
@@ -75,7 +82,9 @@ import {
   setOnly,
   toggleToken,
   type FilterKey,
+  type Token,
 } from "@/query";
+import { PR_STATES } from "../shared/history";
 import { isHistorical, useHistory, useRevalidateOnView, useSyncedPrs, type Pr } from "@/sync";
 
 // The markdown stack and insights charts are loaded on demand to keep the initial bundle lean.
@@ -142,7 +151,7 @@ const Row = memo(function Row({ pr, who, tier, selected, showTheme, now, onOpen 
       <Dot who={who} />
       <span className="w-[52px] shrink-0 text-xs text-muted-foreground tabular-nums">#{pr.number}</span>
       <span className="min-w-0 flex-1 truncate font-[450]">
-        {pr.draft && <CircleDashedIcon className="mr-1.5 inline size-3.5 align-[-2px] text-muted-foreground" aria-label="Draft" />}
+        <PrStateIcon pr={pr} className="mr-1.5 inline align-[-2px]" />
         {pr.title}
       </span>
       {showTheme && (
@@ -154,12 +163,19 @@ const Row = memo(function Row({ pr, who, tier, selected, showTheme, now, onOpen 
       <span className="hidden shrink-0 @4xl:inline-flex">
         <TierBadge tier={tier} />
       </span>
-      {pr.open && (
-        <span className="hidden shrink-0 items-center gap-1 @md:inline-flex">
-          <CiBadge pr={pr} className="w-[52px]" />
-          <CrBadge pr={pr} className="w-[50px]" />
-        </span>
-      )}
+      <span className="hidden shrink-0 items-center justify-end gap-1 @md:inline-flex">
+        <MergeBadge pr={pr} className="w-[78px] justify-start" />
+        {isHistorical(pr) ? (
+          <span className="w-[106px] text-right text-xs text-muted-foreground tabular-nums" title={new Date(pr.mergedAt ?? pr.closedAt).toLocaleString()}>
+            {ago(Date.parse(pr.mergedAt ?? pr.closedAt), now)} ago
+          </span>
+        ) : (
+          <>
+            <CiBadge pr={pr} className="w-[52px]" />
+            <CrBadge pr={pr} className="w-[50px]" />
+          </>
+        )}
+      </span>
       <span className="hidden w-24 shrink-0 text-right text-xs whitespace-nowrap tabular-nums @2xl:block" title={`+${pr.additions} −${pr.deletions}`}>
         <span className="text-(--maintainer)">+{fmt(pr.additions)}</span> <span className="text-destructive/80">−{fmt(pr.deletions)}</span>
       </span>
@@ -258,6 +274,38 @@ const STATUS_IS = STATUS_VIEWS.map((s) => s.value);
 function withStatus(q: string, value: string) {
   const { tokens, words } = parseQuery(q);
   return serialize([...tokens.filter((t) => !(t.key === "is" && STATUS_IS.includes(t.value))), { neg: false, key: "is", value }], words);
+}
+
+type StateTab = "open" | "draft" | "merged" | "closed" | "all";
+const STATE_TABS: { id: StateTab; label: string; icon: ReactNode; history?: boolean }[] = [
+  { id: "open", label: "Open", icon: <GitPullRequestIcon className="size-3.5 text-(--status-pass)" aria-hidden="true" /> },
+  { id: "draft", label: "Drafts", icon: <GitPullRequestDraftIcon className="size-3.5 text-muted-foreground" aria-hidden="true" /> },
+  { id: "merged", label: "Merged", icon: <GitMergeIcon className="size-3.5 text-(--status-merged)" aria-hidden="true" />, history: true },
+  { id: "closed", label: "Closed", icon: <GitPullRequestClosedIcon className="size-3.5 text-(--status-fail)" aria-hidden="true" />, history: true },
+  { id: "all", label: "All", icon: <LayersIcon className="size-3.5 text-muted-foreground" aria-hidden="true" />, history: true },
+];
+
+/** The query after picking a state tab: swaps state and draft/ready filters, keeps everything else. */
+function withStateTab(q: string, tab: StateTab) {
+  const { tokens, words } = parseQuery(q);
+  const kept = tokens.filter((t) => t.key !== "state" && !(t.key === "is" && STATUS_IS.includes(t.value)));
+  // A positive label filter implies history, so open tabs need an explicit state.
+  const needsOpen = kept.some((t) => t.key === "label" && !t.neg);
+  const add = (key: FilterKey, value: string): Token => ({ neg: false, key, value });
+  const extra: Token[] =
+    tab === "open" ? (needsOpen ? [add("state", "open")] : [])
+    : tab === "draft" ? [...(needsOpen ? [add("state", "open")] : []), add("is", "draft")]
+    : tab === "all" ? PR_STATES.map((st) => add("state", st))
+    : [add("state", tab)];
+  return serialize([...kept, ...extra], words);
+}
+
+function activeStateTab(q: string): StateTab | null {
+  const states = requestedStates(q);
+  if (states.length === PR_STATES.length) return "all";
+  if (states.length !== 1) return null;
+  if (states[0] === "open") return isActive(q, "is", "draft") ? "draft" : "open";
+  return states[0];
 }
 
 const SIDEBAR_COLLAPSED_KEY = "sidebar:collapsed";
@@ -366,7 +414,7 @@ export function App() {
   const merged = useHistory("merged", showMerged);
   const closed = useHistory("closed", showClosed);
   const historyLoading = merged.loading || closed.loading;
-  const snapshot = useQuery(api.prHistory.snapshot, showHistory ? {} : "skip");
+  const snapshot = useQuery(api.prHistory.snapshot, historyAvailable ? {} : "skip");
   const historyIncomplete = !snapshot ||
     (showMerged && merged.rows.length < snapshot.merged) ||
     (showClosed && closed.rows.length < snapshot.closed);
@@ -575,6 +623,31 @@ export function App() {
     };
   }, [all, deferredQ, ctx, sidebarTypes]);
 
+  // Like the sidebar, each tab counts what picking it would show. History that isn't loaded yet
+  // shows the snapshot total instead, since filtering it would mean downloading all of it.
+  const stateTabCounts = useMemo(() => {
+    const count = (tab: StateTab, prs: Iterable<Pr>) => {
+      const match = makeMatcher(withStateTab(deferredQ, tab), ctx);
+      let n = 0;
+      for (const pr of prs) if (match(pr)) n++;
+      return n;
+    };
+    const openRows = rows ? [...rows.values()] : [];
+    const history = (state: "merged" | "closed", loaded: boolean, list: Pr[]) =>
+      loaded && !historyLoading ? { n: count(state, list), exact: true } : snapshot ? { n: snapshot[state], exact: false } : undefined;
+    const m = history("merged", showMerged, merged.rows);
+    const c = history("closed", showClosed, closed.rows);
+    const open = rows ? count("open", openRows) : undefined;
+    return {
+      open: open === undefined ? undefined : { n: open, exact: true },
+      draft: rows ? { n: count("draft", openRows), exact: true } : undefined,
+      merged: m,
+      closed: c,
+      all: open !== undefined && m && c ? { n: open + m.n + c.n, exact: m.exact && c.exact } : undefined,
+    } satisfies Record<StateTab, { n: number; exact: boolean } | undefined>;
+  }, [rows, deferredQ, ctx, snapshot, showMerged, showClosed, merged.rows, closed.rows, historyLoading]);
+  const stateTab = activeStateTab(q);
+
   const drillDown = (slice: SliceBy, filterValue: string, who?: Who) => {
     setQ((cur) => applyInsightDrillDown(cur, slice, filterValue, who));
     setPane(null);
@@ -774,6 +847,31 @@ export function App() {
           </Button>
         </header>
 
+        <nav className="flex h-10 shrink-0 items-center gap-0.5 overflow-x-auto border-b border-border px-3" aria-label="Pull request state">
+          {STATE_TABS.filter((t) => !t.history || historyAvailable).map((t) => {
+            const c = stateTabCounts[t.id];
+            return (
+              <button
+                key={t.id}
+                onClick={() => {
+                  setQ((cur) => withStateTab(cur, t.id));
+                  listRef.current?.scrollTo(0, 0);
+                }}
+                aria-current={stateTab === t.id || undefined}
+                className="flex h-7 shrink-0 cursor-default items-center gap-1.5 rounded-md px-2.5 text-[13px] font-[450] text-muted-foreground hover:bg-hover hover:text-foreground aria-current:bg-accent aria-current:text-foreground"
+              >
+                {t.icon}
+                {t.label}
+                {c && (
+                  <span className="text-xs text-muted-foreground tabular-nums" title={c.exact ? undefined : "Total in history; filters apply once this tab loads"}>
+                    {fmt(c.n)}
+                  </span>
+                )}
+              </button>
+            );
+          })}
+        </nav>
+
         <div className="flex min-h-10 shrink-0 flex-wrap items-center gap-1.5 border-b border-border px-4 py-1.5">
           <FilterChips facets={facets} q={q} setQ={setQ} />
           <div ref={filterRef} className="contents">
@@ -957,7 +1055,24 @@ export function App() {
                       </button>
                     </dd>
                     <dt className="text-muted-foreground">Status</dt>
-                    <dd>{paneRow.open ? (paneRow.draft ? "Draft" : "Ready for review") : STATE_LABEL[stateOf(paneRow)]}</dd>
+                    <dd className="flex items-center gap-1.5">
+                      <PrStateIcon pr={paneRow} />
+                      {paneRow.open ? (paneRow.draft ? "Draft" : "Ready for review") : STATE_LABEL[stateOf(paneRow)]}
+                    </dd>
+                    {paneRow.open && (
+                      <>
+                        <dt className="text-muted-foreground">Merge</dt>
+                        <dd>
+                          <button
+                            className="inline-flex cursor-default items-center gap-2 hover:underline"
+                            onClick={() => setQ((cur) => toggleToken(cur, "merge", mergeOf(paneRow)))}
+                          >
+                            <MergeBadge pr={paneRow} />
+                            <span className="text-xs text-muted-foreground">{mergeTooltip(paneRow)}</span>
+                          </button>
+                        </dd>
+                      </>
+                    )}
                     {isHistorical(paneRow) && (
                       <>
                         <dt className="text-muted-foreground">{STATE_LABEL[paneRow.state]} on</dt>

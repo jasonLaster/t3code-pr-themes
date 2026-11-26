@@ -37,6 +37,27 @@ export const CR_LABEL: Record<CrStatus, string> = {
   none: "No review",
 };
 
+export type MergeStatus = "ready" | "blocked" | "behind" | "conflicts" | "unstable" | "unknown";
+export const MERGE_STATUSES: MergeStatus[] = ["ready", "blocked", "behind", "unstable", "conflicts", "unknown"];
+export const MERGE_LABEL: Record<MergeStatus, string> = {
+  ready: "Ready to merge",
+  blocked: "Blocked",
+  behind: "Behind base",
+  unstable: "Checks failing",
+  conflicts: "Conflicts",
+  unknown: "Checking",
+};
+export const MERGE_SHORT: Record<MergeStatus, string> = {
+  ready: "Ready",
+  blocked: "Blocked",
+  behind: "Behind",
+  unstable: "Unstable",
+  conflicts: "Conflicts",
+  unknown: "…",
+};
+export const mergeOf = (pr: Pr): MergeStatus => pr.merge ?? "unknown";
+export const REVIEW_LABEL = { approved: "Approved", changes: "Changes requested", required: "Review required" } as const;
+
 export type Health = "green" | "needs-work" | "running" | "none";
 export const HEALTH_ORDER: Health[] = ["green", "needs-work", "running", "none"];
 export const HEALTH_LABEL: Record<Health, string> = {

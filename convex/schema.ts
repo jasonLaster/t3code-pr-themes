@@ -19,6 +19,21 @@ export const codeRabbitStatus = v.union(
   v.literal("none"),
 );
 
+export const mergeStatus = v.union(
+  v.literal("ready"),
+  v.literal("blocked"),
+  v.literal("behind"),
+  v.literal("conflicts"),
+  v.literal("unstable"),
+  v.literal("unknown"),
+);
+
+export const reviewDecision = v.union(
+  v.literal("approved"),
+  v.literal("changes"),
+  v.literal("required"),
+);
+
 export const prFields = {
   number: v.number(),
   title: v.string(),
@@ -38,6 +53,8 @@ export const prFields = {
   crUnresolved: v.optional(v.number()),
   crTotal: v.optional(v.number()),
   crTitle: v.optional(v.string()),
+  merge: v.optional(mergeStatus),
+  review: v.optional(reviewDecision),
 };
 
 export const historyState = v.union(v.literal("merged"), v.literal("closed"));

@@ -5,6 +5,8 @@ import {
   CircleDotIcon,
   ClockIcon,
   GitMergeIcon,
+  GitPullRequestClosedIcon,
+  GitPullRequestIcon,
   HeartPulseIcon,
   LoaderIcon,
   MessageSquareWarningIcon,
@@ -22,7 +24,7 @@ import {
 import type { ReactNode } from "react";
 import { PR_LABELS, PR_STATES } from "../shared/history";
 import { Avatar, Dot, STATE_LABEL, TIER_LABEL, TierBadge, aliasOf } from "@/components/people";
-import { CiStatusIcon, CrStatusIcon, HealthDot } from "@/components/status";
+import { CiStatusIcon, CrStatusIcon, HealthDot, MergeStatusIcon } from "@/components/status";
 import {
   ALIASES,
   CI_LABEL,
@@ -31,6 +33,8 @@ import {
   CR_STATUSES,
   HEALTH_LABEL,
   HEALTH_ORDER,
+  MERGE_LABEL,
+  MERGE_STATUSES,
   OPENED_RANGE_RE,
   THEMES,
   TIERS,
@@ -40,6 +44,7 @@ import {
   crOf,
   formatOpenedRange,
   healthOf,
+  mergeOf,
   stateOf,
   tierOf,
   whoOf,
@@ -227,9 +232,9 @@ const resolveAuthor = (v: string) => (ALIASES[v.toLowerCase()] ?? v).toLowerCase
 /** Open PRs store the theme name, history rows store its slug. */
 const themeOf = (pr: Pr) => THEMES.find((t) => t.name === pr.theme || t.slug === pr.theme)?.slug ?? "other";
 const STATE_ICON = {
-  open: <CircleDotIcon className="size-3.5 text-(--status-pass)" aria-hidden="true" />,
-  merged: <GitMergeIcon className="size-3.5 text-(--vouched)" aria-hidden="true" />,
-  closed: <XCircleIcon className="size-3.5 text-muted-foreground" aria-hidden="true" />,
+  open: <GitPullRequestIcon className="size-3.5 text-(--status-pass)" aria-hidden="true" />,
+  merged: <GitMergeIcon className="size-3.5 text-(--status-merged)" aria-hidden="true" />,
+  closed: <GitPullRequestClosedIcon className="size-3.5 text-(--status-fail)" aria-hidden="true" />,
 };
 const tagIcon = <TagIcon className="size-3.5 text-muted-foreground" aria-hidden="true" />;
 /** Check data only describes open PRs; history rows carry stale or no check data. */
@@ -299,6 +304,24 @@ export const FIELDS: Field[] = [
       CR_STATUSES.map((s) => ({ value: s, label: CR_LABEL[s], leading: <CrStatusIcon status={s} />, hideEmpty: s === "error" })),
     matches: (pr, value) => !!pr.open && crOf(pr) === value,
     valueAliases: { pass: "clean", green: "clean", ok: "clean", unresolved: "comments", issues: "comments", fail: "error", running: "pending", reviewing: "pending" },
+  },
+  {
+    key: "merge",
+    label: "Merge status",
+    plural: "merge states",
+    icon: GitMergeIcon,
+    aliases: ["mergeable"],
+    // History rows group under their final state, so "Merge status" reads well on any tab.
+    bucket: (pr) => (pr.open ? mergeOf(pr) : stateOf(pr)),
+    values: () => [
+      ...MERGE_STATUSES.map((s) => ({ value: s, label: MERGE_LABEL[s], leading: <MergeStatusIcon status={s} /> })),
+      { value: "merged", label: STATE_LABEL.merged, leading: STATE_ICON.merged, hideEmpty: true },
+      { value: "closed", label: STATE_LABEL.closed, leading: STATE_ICON.closed, hideEmpty: true },
+    ],
+    filterValues: () => MERGE_STATUSES.map((s) => ({ value: s, label: MERGE_LABEL[s], leading: <MergeStatusIcon status={s} /> })),
+    optionOf: (pr) => (pr.open ? mergeOf(pr) : stateOf(pr)),
+    matches: (pr, value) => !!pr.open && mergeOf(pr) === value,
+    valueAliases: { clean: "ready", mergeable: "ready", conflict: "conflicts", conflicting: "conflicts", dirty: "conflicts" },
   },
   rangeField(
     { key: "unresolved", label: "CodeRabbit comments", plural: "counts", icon: MessagesSquareIcon, aliases: ["threads", "comments"] },
