@@ -451,6 +451,28 @@ export function App() {
   const [historyLimit, setHistoryLimit] = useState(HISTORY_ROW_PAGE);
   useEffect(() => setHistoryLimit(HISTORY_ROW_PAGE), [deferredQ, group, sort]);
 
+  // Navigation pushes a history entry so Back/Forward work; typing in search and
+  // stepping through rows with j/k only replace the current one.
+  const historyMode = useRef<"push" | "replace">("replace");
+  useEffect(() => {
+    const onPop = () => {
+      const u = readUrl();
+      historyMode.current = "replace";
+      setQ(u.q);
+      setDraft(parseQuery(u.q).words.join(" "));
+      setGroup(u.group);
+      setSort(u.sort);
+      setView(u.view);
+      setMeasure(u.measure);
+      setExplicitSlice(u.slice);
+      setSegment(u.segment);
+      setPane(u.pr);
+      if (u.pr) setSelected(u.pr);
+    };
+    addEventListener("popstate", onPop);
+    return () => removeEventListener("popstate", onPop);
+  }, []);
+
   useEffect(() => {
     const p = new URLSearchParams();
     if (q) p.set("q", q);
@@ -464,7 +486,11 @@ export function App() {
     }
     if (pane) p.set("pr", String(pane));
     const next = `${location.pathname}${p.size ? `?${p}` : ""}`;
-    if (next !== `${location.pathname}${location.search}`) history.replaceState(null, "", next);
+    const mode = historyMode.current;
+    historyMode.current = "push";
+    if (next === `${location.pathname}${location.search}`) return;
+    if (mode === "push") history.pushState(null, "", next);
+    else history.replaceState(null, "", next);
   }, [q, group, sort, view, measure, explicitSlice, segment, pane]);
 
   const contributors: Contributors = useMemo(
@@ -482,6 +508,7 @@ export function App() {
   // Typing `author:theo ` in the search box turns the finished token into a filter chip.
   const onSearch = (text: string, commitAll = false) => {
     const input = readSearchInput(text, commitAll);
+    historyMode.current = "replace";
     setQ((cur) => serialize([...parseQuery(cur).tokens, ...input.tokens], input.words));
     setDraft(input.draft);
   };
@@ -533,7 +560,10 @@ export function App() {
     const i = visible.findIndex((pr) => pr.number === selected);
     const next = visible[i === -1 ? (delta > 0 ? 0 : visible.length - 1) : Math.min(Math.max(i + delta, 0), visible.length - 1)];
     setSelected(next.number);
-    if (pane) setPane(next.number);
+    if (pane) {
+      historyMode.current = "replace";
+      setPane(next.number);
+    }
     listRef.current?.querySelector(`[data-n="${next.number}"]`)?.scrollIntoView({ block: "nearest" });
   };
 
