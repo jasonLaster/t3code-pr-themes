@@ -20,7 +20,7 @@ export function useHistory(state: HistoricalPr["state"], enabled: boolean) {
 }
 type Store = { syncId: number; rows: ReadonlyMap<number, OpenPr> };
 
-const CACHE_KEY = "prs-cache-v1";
+const CACHE_KEY = "prs-cache-v2";
 
 /**
  * Linear-style sync: boot from the IndexedDB cache, then subscribe to rows
