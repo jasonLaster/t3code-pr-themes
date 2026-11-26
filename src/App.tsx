@@ -1,28 +1,50 @@
 import { useQuery } from "convex/react";
 import {
+  AlertCircleIcon,
   ArrowUpRightIcon,
   CalendarIcon,
+  CheckCircle2Icon,
   CircleDashedIcon,
+  ClockIcon,
   ListFilterIcon,
+  MessageSquareWarningIcon,
   SearchIcon,
   ShapesIcon,
   ShieldCheckIcon,
   TagIcon,
   UserIcon,
+  XCircleIcon,
   XIcon,
 } from "lucide-react";
 import { lazy, memo, Suspense, useDeferredValue, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { api } from "../convex/_generated/api";
+import { ChecksPanel } from "@/ChecksPanel";
 import { CommandPalette } from "@/components/command-palette";
 import { DisplayMenu } from "@/components/display";
 import { FilterChips, FilterMenu, type Facet } from "@/components/filters";
+import {
+  CiBadge,
+  CiStatusIcon,
+  CrBadge,
+  CrStatusIcon,
+  HealthDot,
+  RabbitIcon,
+  ciSummaryText,
+  crSummaryText,
+} from "@/components/status";
 import { Button, buttonVariants } from "@/components/ui/button";
 import { Dialog, DialogBackdrop, DialogContent, DialogTitle } from "@/components/ui/dialog";
 import { Badge, Kbd } from "@/components/ui/kbd";
 import { cn } from "@/lib/utils";
 import {
   ALIASES,
+  CI_LABEL,
+  CI_STATUSES,
+  CR_LABEL,
+  CR_STATUSES,
   GROUP_LABEL,
+  HEALTH_LABEL,
+  HEALTH_ORDER,
   RANGES,
   SORTERS,
   SORT_LABEL,
@@ -30,6 +52,9 @@ import {
   TIERS,
   WHO,
   WHO_LABEL,
+  ciOf,
+  crOf,
+  healthOf,
   isActive,
   makeMatcher,
   parseQuery,
@@ -39,8 +64,11 @@ import {
   tierOf,
   toggleToken,
   whoOf,
+  type CiStatus,
   type Contributors,
+  type CrStatus,
   type GroupBy,
+  type Health,
   type SortBy,
   type Tier,
   type Who,
@@ -138,8 +166,12 @@ const Row = memo(function Row({ pr, who, tier, selected, showTheme, now, onOpen 
           {pr.theme}
         </Badge>
       )}
-      <span className="hidden shrink-0 @3xl:inline-flex">
+      <span className="hidden shrink-0 @4xl:inline-flex">
         <TierBadge tier={tier} />
+      </span>
+      <span className="hidden shrink-0 items-center gap-1 @md:inline-flex">
+        <CiBadge pr={pr} className="w-[52px]" />
+        <CrBadge pr={pr} className="w-[50px]" />
       </span>
       <span className="hidden w-24 shrink-0 text-right text-xs whitespace-nowrap tabular-nums @2xl:block" title={`+${pr.additions} −${pr.deletions}`}>
         <span className="text-(--maintainer)">+{fmt(pr.additions)}</span> <span className="text-destructive/80">−{fmt(pr.deletions)}</span>
@@ -163,6 +195,58 @@ const VIEWS: { label: string; who?: Who; tier?: Tier; author?: string }[] = [
   { label: "Vouched", who: "vouched", tier: "vouched" },
   { label: "Unvouched", who: "community", tier: "community" },
   { label: "Denounced", tier: "denounced" },
+];
+
+type CheckView = {
+  id: string;
+  label: string;
+  key: "is" | "ci" | "cr";
+  value: string;
+  icon: ReactNode;
+  match: (pr: Pr) => boolean;
+};
+
+const CHECK_VIEWS: CheckView[] = [
+  {
+    id: "green",
+    label: "Green",
+    key: "is",
+    value: "green",
+    icon: <CheckCircle2Icon className="size-3.5 shrink-0 text-(--status-pass)" aria-hidden="true" />,
+    match: (pr) => healthOf(pr) === "green",
+  },
+  {
+    id: "needs-work",
+    label: "Needs work",
+    key: "is",
+    value: "needs-work",
+    icon: <AlertCircleIcon className="size-3.5 shrink-0 text-(--status-fail)" aria-hidden="true" />,
+    match: (pr) => healthOf(pr) === "needs-work",
+  },
+  {
+    id: "ci-fail",
+    label: "CI failing",
+    key: "ci",
+    value: "fail",
+    icon: <XCircleIcon className="size-3.5 shrink-0 text-(--status-fail)" aria-hidden="true" />,
+    match: (pr) => ciOf(pr) === "fail",
+  },
+  {
+    id: "cr-comments",
+    label: "CodeRabbit comments",
+    key: "cr",
+    value: "comments",
+    icon: <MessageSquareWarningIcon className="size-3.5 shrink-0 text-(--status-warn)" aria-hidden="true" />,
+    match: (pr) => crOf(pr) === "comments",
+  },
+  {
+    id: "running",
+    label: "Running",
+    key: "is",
+    value: "running",
+    icon: <ClockIcon className="size-3.5 shrink-0 text-(--status-pending)" aria-hidden="true" />,
+    match: (pr) => healthOf(pr) === "running",
+  },
 ];
 
 function SidebarItem({ active, onClick, children, count }: { active: boolean; onClick: () => void; children: ReactNode; count: number }) {
@@ -244,6 +328,9 @@ export function App() {
   const groups = useMemo(() => {
     const keyOf: Record<GroupBy, (pr: Pr) => string> = {
       theme: (pr) => pr.theme,
+      health: (pr) => HEALTH_LABEL[healthOf(pr)],
+      ci: (pr) => CI_LABEL[ciOf(pr)],
+      cr: (pr) => CR_LABEL[crOf(pr)],
       who: (pr) => WHO_LABEL[whoOf(pr.author, contributors)],
       author: (pr) => pr.author,
       none: () => "All",
@@ -256,9 +343,21 @@ export function App() {
       else map.set(k, [pr]);
     }
     const entries = [...map];
-    const whoOrder = WHO.map((w) => WHO_LABEL[w]);
-    if (group === "who") entries.sort((a, b) => whoOrder.indexOf(a[0]) - whoOrder.indexOf(b[0]));
-    else entries.sort((a, b) => Number(a[0] === "Other") - Number(b[0] === "Other") || b[1].length - a[1].length);
+    if (group === "who") {
+      const order = WHO.map((w) => WHO_LABEL[w]);
+      entries.sort((a, b) => order.indexOf(a[0]) - order.indexOf(b[0]));
+    } else if (group === "health") {
+      const order = HEALTH_ORDER.map((h) => HEALTH_LABEL[h]);
+      entries.sort((a, b) => order.indexOf(a[0]) - order.indexOf(b[0]));
+    } else if (group === "ci") {
+      const order = CI_STATUSES.map((s) => CI_LABEL[s]);
+      entries.sort((a, b) => order.indexOf(a[0]) - order.indexOf(b[0]));
+    } else if (group === "cr") {
+      const order = CR_STATUSES.map((s) => CR_LABEL[s]);
+      entries.sort((a, b) => order.indexOf(a[0]) - order.indexOf(b[0]));
+    } else {
+      entries.sort((a, b) => Number(a[0] === "Other") - Number(b[0] === "Other") || b[1].length - a[1].length);
+    }
     return entries;
   }, [filtered, group, contributors]);
 
@@ -339,9 +438,49 @@ export function App() {
     const tiers = countBy((pr) => tierOf(pr.author, contributors));
     const themes = countBy((pr) => pr.theme);
     const kinds = [...countBy((pr) => pr.kind || "other")].sort((a, b) => b[1] - a[1]);
+    const ciCounts = countBy((pr) => ciOf(pr));
+    const crCounts = countBy((pr) => crOf(pr));
+    const healthCounts = countBy((pr) => healthOf(pr));
     const drafts = all.filter((pr) => pr.draft).length;
     const tierWho: Record<Tier, Who> = { maintainer: "maintainer", vouched: "vouched", community: "community", denounced: "community" };
     return [
+      {
+        key: "ci",
+        label: "CI",
+        plural: "CI states",
+        icon: CheckCircle2Icon,
+        values: CI_STATUSES.map((s) => ({
+          value: s,
+          label: CI_LABEL[s],
+          count: ciCounts.get(s) ?? 0,
+          leading: <CiStatusIcon status={s} />,
+        })),
+      },
+      {
+        key: "cr",
+        label: "CodeRabbit",
+        plural: "CodeRabbit states",
+        icon: MessageSquareWarningIcon,
+        values: CR_STATUSES.filter((s) => s !== "error" || (crCounts.get(s) ?? 0) > 0).map((s) => ({
+          value: s,
+          label: CR_LABEL[s],
+          count: crCounts.get(s) ?? 0,
+          leading: <CrStatusIcon status={s} />,
+        })),
+      },
+      {
+        key: "is",
+        label: "Status",
+        plural: "statuses",
+        icon: CircleDashedIcon,
+        values: [
+          { value: "green", label: "Green", count: healthCounts.get("green") ?? 0, leading: <HealthDot health="green" /> },
+          { value: "needs-work", label: "Needs work", count: healthCounts.get("needs-work") ?? 0, leading: <HealthDot health="needs-work" /> },
+          { value: "running", label: "Running", count: healthCounts.get("running") ?? 0, leading: <HealthDot health="running" /> },
+          { value: "ready", label: "Ready for review", count: all.length - drafts },
+          { value: "draft", label: "Draft", count: drafts },
+        ],
+      },
       {
         key: "author",
         label: "Author",
@@ -382,16 +521,6 @@ export function App() {
           count: all.filter((pr) => Date.parse(pr.createdAt) >= asOf - Number.parseInt(r.value) * 864e5).length,
         })),
       },
-      {
-        key: "is",
-        label: "Status",
-        plural: "statuses",
-        icon: CircleDashedIcon,
-        values: [
-          { value: "draft", label: "Draft", count: drafts },
-          { value: "ready", label: "Ready for review", count: all.length - drafts },
-        ],
-      },
     ];
   }, [all, contributors, asOf]);
 
@@ -403,11 +532,28 @@ export function App() {
   const viewCount = (v: (typeof VIEWS)[number]) =>
     !v.author && !v.tier ? all.length : all.filter((pr) => (v.author ? pr.author.toLowerCase() === ALIASES[v.author] : tierOf(pr.author, contributors) === v.tier)).length;
 
+  const checkViewCounts = useMemo(
+    () => Object.fromEntries(CHECK_VIEWS.map((cv) => [cv.id, all.filter(cv.match).length])),
+    [all],
+  );
+
   const whoCounts = useMemo(() => {
     const c = Object.fromEntries(WHO.map((w) => [w, 0])) as Record<Who, number>;
     for (const pr of filtered) c[whoOf(pr.author, contributors)]++;
     return c;
   }, [filtered, contributors]);
+
+  const healthSummary = useMemo(() => {
+    const counts: Record<Health, number> = { green: 0, "needs-work": 0, running: 0, none: 0 };
+    let ciFail = 0;
+    let crComments = 0;
+    for (const pr of filtered) {
+      counts[healthOf(pr)]++;
+      if (ciOf(pr) === "fail") ciFail++;
+      if (crOf(pr) === "comments") crComments++;
+    }
+    return { ...counts, ciFail, crComments, total: filtered.length };
+  }, [filtered]);
 
   const themeBars = useMemo(() => {
     const m = new Map<string, Record<Who, number>>();
@@ -430,6 +576,21 @@ export function App() {
 
   const loading = rows === null || (rows.size === 0 && !status?.fetchedAt);
   const title = activeView?.label ?? "Filtered";
+
+  const toggleCheckView = (cv: CheckView) => {
+    setQ((cur) => {
+      if (isActive(cur, cv.key, cv.value)) {
+        return toggleToken(cur, cv.key, cv.value);
+      }
+      // Replace mutually exclusive check-view filters while preserving author/tier/theme filters.
+      const cleaned = setOnly(cur, ["ci", "cr"]);
+      const withoutHealthIs = serialize(
+        parseQuery(cleaned).tokens.filter((t) => !(t.key === "is" && ["green", "needs-work", "running"].includes(t.value))),
+        parseQuery(cleaned).words,
+      );
+      return toggleToken(withoutHealthIs, cv.key, cv.value);
+    });
+  };
 
   return (
     <div className="flex h-dvh overflow-hidden bg-sidebar text-foreground">
@@ -463,6 +624,20 @@ export function App() {
               >
                 {v.who ? <Dot who={v.who} /> : v.tier ? <span className="size-2 rounded-full border border-destructive" /> : <span className="size-2" />}
                 {v.label}
+              </SidebarItem>
+            ))}
+          </div>
+          <div className="space-y-px">
+            <div className="px-2 pb-1 text-xs text-muted-foreground">Checks</div>
+            {CHECK_VIEWS.map((cv) => (
+              <SidebarItem
+                key={cv.id}
+                active={isActive(q, cv.key, cv.value)}
+                count={checkViewCounts[cv.id] ?? 0}
+                onClick={() => toggleCheckView(cv)}
+              >
+                {cv.icon}
+                <span className="truncate">{cv.label}</span>
               </SidebarItem>
             ))}
           </div>
@@ -511,7 +686,7 @@ export function App() {
               onKeyDown={(e) => {
                 if (e.key === "Enter") onSearch(draft, true);
               }}
-              placeholder="Search, or type author:theo…"
+              placeholder="Search, or type is:green ci:fail…"
               spellCheck={false}
               aria-label="Search pull requests"
               className="h-7 w-full rounded-md border border-border bg-secondary/60 pr-7 pl-7 text-[13px] outline-none placeholder:text-muted-foreground focus:border-ring focus:bg-background"
@@ -556,16 +731,93 @@ export function App() {
           <main ref={listRef} className="@container min-w-0 flex-1 overflow-y-auto" aria-label="Pull requests">
             {insights && filtered.length > 0 && (
               <section className="space-y-4 border-b border-border px-6 py-4" aria-label="Insights">
-                <div className="flex flex-wrap gap-x-7 gap-y-2">
-                  {WHO.map((w) => (
-                    <div key={w}>
-                      <div className="text-[15px] font-[590] tabular-nums">{fmt(whoCounts[w])}</div>
-                      <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
-                        <Dot who={w} />
-                        {WHO_LABEL[w]}
+                <div className="flex flex-wrap items-start justify-between gap-x-8 gap-y-3">
+                  <div className="flex flex-wrap gap-x-7 gap-y-2">
+                    {WHO.map((w) => (
+                      <div key={w}>
+                        <div className="text-[15px] font-[590] tabular-nums">{fmt(whoCounts[w])}</div>
+                        <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
+                          <Dot who={w} />
+                          {WHO_LABEL[w]}
+                        </div>
                       </div>
-                    </div>
-                  ))}
+                    ))}
+                  </div>
+                  <div className="flex flex-wrap items-center gap-2">
+                    <button
+                      onClick={() => toggleCheckView(CHECK_VIEWS[0])}
+                      aria-pressed={isActive(q, "is", "green")}
+                      className="flex cursor-default items-center gap-2 rounded-md border border-border px-2.5 py-1.5 text-left hover:bg-hover aria-pressed:border-(--status-pass)/50 aria-pressed:bg-(--status-pass-bg)"
+                    >
+                      <HealthDot health="green" />
+                      <div>
+                        <div className="text-[13px] leading-tight font-[590] tabular-nums">{fmt(healthSummary.green)}</div>
+                        <div className="text-[11px] text-muted-foreground">Green</div>
+                      </div>
+                    </button>
+                    <button
+                      onClick={() => toggleCheckView(CHECK_VIEWS[1])}
+                      aria-pressed={isActive(q, "is", "needs-work")}
+                      className="flex cursor-default items-center gap-2 rounded-md border border-border px-2.5 py-1.5 text-left hover:bg-hover aria-pressed:border-(--status-fail)/50 aria-pressed:bg-(--status-fail-bg)"
+                      title={`${healthSummary.ciFail} CI failing, ${healthSummary.crComments} with unresolved CodeRabbit comments`}
+                    >
+                      <HealthDot health="needs-work" />
+                      <div>
+                        <div className="text-[13px] leading-tight font-[590] tabular-nums">{fmt(healthSummary["needs-work"])}</div>
+                        <div className="text-[11px] text-muted-foreground">
+                          Needs work
+                          {(healthSummary.ciFail > 0 || healthSummary.crComments > 0) && (
+                            <span className="ml-1 opacity-75">
+                              ({healthSummary.ciFail} CI · {healthSummary.crComments} CR)
+                            </span>
+                          )}
+                        </div>
+                      </div>
+                    </button>
+                    {healthSummary.running > 0 && (
+                      <button
+                        onClick={() => toggleCheckView(CHECK_VIEWS[4])}
+                        aria-pressed={isActive(q, "is", "running")}
+                        className="flex cursor-default items-center gap-2 rounded-md border border-border px-2.5 py-1.5 text-left hover:bg-hover aria-pressed:border-(--status-pending)/50 aria-pressed:bg-(--status-pending-bg)"
+                      >
+                        <HealthDot health="running" />
+                        <div>
+                          <div className="text-[13px] leading-tight font-[590] tabular-nums">{fmt(healthSummary.running)}</div>
+                          <div className="text-[11px] text-muted-foreground">Running</div>
+                        </div>
+                      </button>
+                    )}
+                  </div>
+                </div>
+                <div className="flex h-1.5 w-full gap-0.5 overflow-hidden rounded-full bg-muted" aria-label="Check health breakdown">
+                  {healthSummary.green > 0 && (
+                    <span
+                      className="h-full bg-(--status-pass)"
+                      style={{ flexGrow: healthSummary.green }}
+                      title={`Green: ${fmt(healthSummary.green)}`}
+                    />
+                  )}
+                  {healthSummary["needs-work"] > 0 && (
+                    <span
+                      className="h-full bg-(--status-fail)"
+                      style={{ flexGrow: healthSummary["needs-work"] }}
+                      title={`Needs work: ${fmt(healthSummary["needs-work"])}`}
+                    />
+                  )}
+                  {healthSummary.running > 0 && (
+                    <span
+                      className="h-full bg-(--status-pending)"
+                      style={{ flexGrow: healthSummary.running }}
+                      title={`Running: ${fmt(healthSummary.running)}`}
+                    />
+                  )}
+                  {healthSummary.none > 0 && (
+                    <span
+                      className="h-full bg-muted-foreground/25"
+                      style={{ flexGrow: healthSummary.none }}
+                      title={`Pending / no checks: ${fmt(healthSummary.none)}`}
+                    />
+                  )}
                 </div>
                 <div className="grid gap-px" role="table" aria-label="Open pull requests by theme">
                   {themeBars.map(({ theme, r, total }) => (
@@ -601,42 +853,50 @@ export function App() {
                 <Button size="sm" onClick={clearAll}>Clear filters</Button>
               </div>
             ) : (
-              groups.map(([key, list]) => (
-                <section key={key}>
-                  <button
-                    aria-expanded={!collapsed.has(key)}
-                    onClick={() =>
-                      setCollapsed((cur) => {
-                        const next = new Set(cur);
-                        if (!next.delete(key)) next.add(key);
-                        return next;
-                      })
-                    }
-                    className="group sticky top-0 z-10 flex h-9 w-full cursor-default items-center gap-2 bg-group px-6 text-left text-[13px]"
-                  >
-                    <span className="-ml-3 w-2 text-muted-foreground transition-transform group-aria-expanded:rotate-90">›</span>
-                    {group === "author" && <Avatar login={key} />}
-                    {group === "who" && <Dot who={WHO.find((w) => WHO_LABEL[w] === key) ?? "community"} />}
-                    {group === "theme" && <TagIcon className="size-3.5 text-muted-foreground" aria-hidden="true" />}
-                    <span className="font-[510]">{key}</span>
-                    {group === "author" && <TierBadge tier={tierOf(key, contributors)} />}
-                    <span className="text-muted-foreground tabular-nums">{fmt(list.length)}</span>
-                  </button>
-                  {!collapsed.has(key) &&
-                    list.map((pr) => (
-                      <Row
-                        key={pr.number}
-                        pr={pr}
-                        who={whoOf(pr.author, contributors)}
-                        tier={tierOf(pr.author, contributors)}
-                        selected={pr.number === selected}
-                        showTheme={group !== "theme"}
-                        now={now}
-                        onOpen={openPr}
-                      />
-                    ))}
-                </section>
-              ))
+              groups.map(([key, list]) => {
+                const healthKey = group === "health" ? HEALTH_ORDER.find((h) => HEALTH_LABEL[h] === key) : undefined;
+                const ciKey = group === "ci" ? CI_STATUSES.find((s) => CI_LABEL[s] === key) : undefined;
+                const crKey = group === "cr" ? CR_STATUSES.find((s) => CR_LABEL[s] === key) : undefined;
+                return (
+                  <section key={key}>
+                    <button
+                      aria-expanded={!collapsed.has(key)}
+                      onClick={() =>
+                        setCollapsed((cur) => {
+                          const next = new Set(cur);
+                          if (!next.delete(key)) next.add(key);
+                          return next;
+                        })
+                      }
+                      className="group sticky top-0 z-10 flex h-9 w-full cursor-default items-center gap-2 bg-group px-6 text-left text-[13px]"
+                    >
+                      <span className="-ml-3 w-2 text-muted-foreground transition-transform group-aria-expanded:rotate-90">›</span>
+                      {group === "author" && <Avatar login={key} />}
+                      {group === "who" && <Dot who={WHO.find((w) => WHO_LABEL[w] === key) ?? "community"} />}
+                      {group === "theme" && <TagIcon className="size-3.5 text-muted-foreground" aria-hidden="true" />}
+                      {healthKey && <HealthDot health={healthKey} />}
+                      {ciKey && <CiStatusIcon status={ciKey as CiStatus} />}
+                      {crKey && <CrStatusIcon status={crKey as CrStatus} />}
+                      <span className="font-[510]">{key}</span>
+                      {group === "author" && <TierBadge tier={tierOf(key, contributors)} />}
+                      <span className="text-muted-foreground tabular-nums">{fmt(list.length)}</span>
+                    </button>
+                    {!collapsed.has(key) &&
+                      list.map((pr) => (
+                        <Row
+                          key={pr.number}
+                          pr={pr}
+                          who={whoOf(pr.author, contributors)}
+                          tier={tierOf(pr.author, contributors)}
+                          selected={pr.number === selected}
+                          showTheme={group !== "theme"}
+                          now={now}
+                          onOpen={openPr}
+                        />
+                      ))}
+                  </section>
+                );
+              })
             )}
           </main>
 
@@ -672,6 +932,26 @@ export function App() {
                         <span className="w-full text-xs text-muted-foreground">{contributors.get(paneRow.author.toLowerCase())!.reason}</span>
                       )}
                     </dd>
+                    <dt className="text-muted-foreground">CI</dt>
+                    <dd className="flex items-center gap-2">
+                      <button
+                        className="inline-flex cursor-default items-center gap-2 hover:underline"
+                        onClick={() => setQ((cur) => toggleToken(cur, "ci", ciOf(paneRow)))}
+                      >
+                        <CiBadge pr={paneRow} />
+                        <span className="text-xs text-muted-foreground">{ciSummaryText(paneRow)}</span>
+                      </button>
+                    </dd>
+                    <dt className="text-muted-foreground">CodeRabbit</dt>
+                    <dd className="flex items-center gap-2">
+                      <button
+                        className="inline-flex cursor-default items-center gap-2 hover:underline"
+                        onClick={() => setQ((cur) => toggleToken(cur, "cr", crOf(paneRow)))}
+                      >
+                        <CrBadge pr={paneRow} />
+                        <span className="text-xs text-muted-foreground">{crSummaryText(paneRow)}</span>
+                      </button>
+                    </dd>
                     <dt className="text-muted-foreground">Theme</dt>
                     <dd>
                       <button className="flex cursor-default items-center gap-1.5 hover:underline" onClick={() => setQ((cur) => toggleToken(cur, "theme", themeSlug(paneRow.theme)))}>
@@ -690,6 +970,7 @@ export function App() {
                       <span className="text-(--maintainer)">+{fmt(paneRow.additions)}</span> <span className="text-destructive/80">−{fmt(paneRow.deletions)}</span>
                     </dd>
                   </dl>
+                  <ChecksPanel pr={paneRow} />
                   <Suspense fallback={<p className="text-[13px] text-muted-foreground">Loading description…</p>}>
                     <Description number={paneRow.number} />
                   </Suspense>
@@ -743,10 +1024,15 @@ export function App() {
           </div>
           <p className="mt-4 mb-1 font-[510]">Typing filters</p>
           <p className="text-muted-foreground">
-            In search, type <code>author:theo</code>, <code>tier:vouched</code>, <code>theme:mobile</code>, <code>type:feat</code>, <code>opened:7d</code> or{" "}
-            <code>is:draft</code>, then a space. Prefix with <code>-</code> to exclude. Tiers come from <code>.github/VOUCHED.td</code> and{" "}
-            <code>.github/TRIAGE_EXEMPTIONS.td</code>.
+            In search, type <code>is:green</code>, <code>is:needs-work</code>, <code>ci:pass</code>, <code>ci:fail</code>,{" "}
+            <code>cr:clean</code>, <code>cr:comments</code>, <code>author:theo</code>, <code>tier:vouched</code>, <code>theme:mobile</code>,{" "}
+            <code>type:feat</code>, <code>opened:7d</code> or <code>is:draft</code>, then a space. Prefix with <code>-</code> to exclude.
+            Tiers come from <code>.github/VOUCHED.td</code> and <code>.github/TRIAGE_EXEMPTIONS.td</code>.
           </p>
+          <div className="mt-3 flex items-center gap-2 text-xs text-muted-foreground">
+            <RabbitIcon className="size-3.5" />
+            <span>CodeRabbit status tracks both the review check and unresolved CodeRabbit comments.</span>
+          </div>
         </DialogContent>
       </Dialog>
     </div>

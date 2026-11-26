@@ -16,6 +16,54 @@ export const WHO_LABEL: Record<Who, string> = {
 };
 export const TIERS: Tier[] = ["maintainer", "vouched", "community", "denounced"];
 
+export type CiStatus = "pass" | "fail" | "pending" | "none";
+export const CI_STATUSES: CiStatus[] = ["pass", "fail", "pending", "none"];
+export const CI_LABEL: Record<CiStatus, string> = {
+  pass: "Passing",
+  fail: "Failing",
+  pending: "Running",
+  none: "No checks",
+};
+
+export type CrStatus = "clean" | "comments" | "pending" | "skipped" | "error" | "none";
+export const CR_STATUSES: CrStatus[] = ["clean", "comments", "pending", "skipped", "error", "none"];
+export const CR_LABEL: Record<CrStatus, string> = {
+  clean: "Clean",
+  comments: "Has comments",
+  pending: "Reviewing",
+  skipped: "Skipped",
+  error: "Failed",
+  none: "No review",
+};
+
+export type Health = "green" | "needs-work" | "running" | "none";
+export const HEALTH_ORDER: Health[] = ["green", "needs-work", "running", "none"];
+export const HEALTH_LABEL: Record<Health, string> = {
+  green: "Green",
+  "needs-work": "Needs work",
+  running: "Running",
+  none: "Pending / no checks",
+};
+
+export const ciOf = (pr: Pr): CiStatus => pr.ci ?? "none";
+export const crOf = (pr: Pr): CrStatus => pr.cr ?? "none";
+
+/**
+ * Overall PR check health combining CI and CodeRabbit:
+ * - needs-work: CI failing, CodeRabbit has unresolved comments, or CodeRabbit failed
+ * - running: CI or CodeRabbit currently running
+ * - green: CI passing and CodeRabbit has no unresolved comments/errors (clean, skipped, or none)
+ * - none: CI hasn't passed or CodeRabbit threads are still syncing
+ */
+export function healthOf(pr: Pr): Health {
+  const ci = ciOf(pr);
+  const cr = pr.cr;
+  if (ci === "fail" || cr === "comments" || cr === "error") return "needs-work";
+  if (ci === "pending" || cr === "pending") return "running";
+  if (ci === "pass" && cr !== undefined) return "green";
+  return "none";
+}
+
 export const ALIASES: Record<string, string> = { julius: "juliusmarminge", theo: "t3dotgg" };
 const resolveAuthor = (v: string) => (ALIASES[v.toLowerCase()] ?? v).toLowerCase();
 
@@ -41,9 +89,17 @@ export const RANGES = [
   { value: "90d", label: "Last 3 months" },
 ];
 
-export const FILTER_KEYS = ["author", "theme", "tier", "type", "opened", "is"] as const;
+export const FILTER_KEYS = ["author", "theme", "tier", "type", "opened", "ci", "cr", "is"] as const;
 export type FilterKey = (typeof FILTER_KEYS)[number];
-const KEY_ALIASES: Record<string, FilterKey> = { by: "author", th: "theme", kind: "type", age: "opened" };
+const KEY_ALIASES: Record<string, FilterKey> = {
+  by: "author",
+  th: "theme",
+  kind: "type",
+  age: "opened",
+  checks: "ci",
+  coderabbit: "cr",
+  rabbit: "cr",
+};
 /** Keys that hold a single value; setting one replaces the previous value. */
 const SINGLE: FilterKey[] = ["opened"];
 
@@ -90,6 +146,26 @@ export const removeToken = (q: string, token: Token) => {
   return serialize(tokens.filter((t) => tokenText(t) !== tokenText(token)), words);
 };
 
+const CI_VALUE_ALIASES: Record<string, CiStatus> = {
+  passing: "pass",
+  green: "pass",
+  success: "pass",
+  failing: "fail",
+  red: "fail",
+  running: "pending",
+};
+
+const CR_VALUE_ALIASES: Record<string, CrStatus> = {
+  pass: "clean",
+  green: "clean",
+  ok: "clean",
+  unresolved: "comments",
+  issues: "comments",
+  fail: "error",
+  running: "pending",
+  reviewing: "pending",
+};
+
 function test(pr: Pr, key: FilterKey, value: string, contributors: Contributors, now: number) {
   switch (key) {
     case "author":
@@ -108,8 +184,21 @@ function test(pr: Pr, key: FilterKey, value: string, contributors: Contributors,
       const unit = { h: 36e5, d: 864e5, w: 7 * 864e5, m: 30 * 864e5 }[m[2] as "h" | "d" | "w" | "m"];
       return Date.parse(pr.createdAt) >= now - Number(m[1]) * unit;
     }
+    case "ci": {
+      const target = CI_VALUE_ALIASES[value] ?? value;
+      return ciOf(pr) === target;
+    }
+    case "cr": {
+      const target = CR_VALUE_ALIASES[value] ?? value;
+      return crOf(pr) === target;
+    }
     case "is":
-      return value === "draft" ? pr.draft : value === "ready" ? !pr.draft : true;
+      if (value === "draft") return pr.draft;
+      if (value === "ready") return !pr.draft;
+      if (value === "green") return healthOf(pr) === "green";
+      if (value === "needs-work" || value === "red") return healthOf(pr) === "needs-work";
+      if (value === "running") return healthOf(pr) === "running";
+      return true;
   }
 }
 
@@ -128,14 +217,37 @@ export function makeMatcher(q: string, contributors: Contributors, now: number) 
   };
 }
 
-export type GroupBy = "theme" | "who" | "author" | "none";
-export type SortBy = "created" | "updated" | "size";
-export const GROUP_LABEL: Record<GroupBy, string> = { theme: "Theme", who: "Contributor tier", author: "Author", none: "No grouping" };
-export const SORT_LABEL: Record<SortBy, string> = { created: "Newest", updated: "Recently updated", size: "Largest" };
+export type GroupBy = "theme" | "health" | "ci" | "cr" | "who" | "author" | "none";
+export type SortBy = "created" | "updated" | "health" | "needs-work" | "size";
+export const GROUP_LABEL: Record<GroupBy, string> = {
+  theme: "Theme",
+  health: "Check health",
+  ci: "CI status",
+  cr: "CodeRabbit",
+  who: "Contributor tier",
+  author: "Author",
+  none: "No grouping",
+};
+export const SORT_LABEL: Record<SortBy, string> = {
+  created: "Newest",
+  updated: "Recently updated",
+  health: "Green first",
+  "needs-work": "Needs work first",
+  size: "Largest",
+};
+
+const HEALTH_RANK_GREEN_FIRST: Record<Health, number> = { green: 0, running: 1, none: 2, "needs-work": 3 };
+const HEALTH_RANK_WORK_FIRST: Record<Health, number> = { "needs-work": 0, running: 1, none: 2, green: 3 };
+const workSeverity = (pr: Pr) => (ciOf(pr) === "fail" ? 1000 + (pr.ciFailed ?? 1) * 10 : 0) + (pr.crUnresolved ?? 0);
 
 export const SORTERS: Record<SortBy, (a: Pr, b: Pr) => number> = {
   created: (a, b) => b.number - a.number,
   updated: (a, b) => b.updatedAt.localeCompare(a.updatedAt),
+  health: (a, b) => HEALTH_RANK_GREEN_FIRST[healthOf(a)] - HEALTH_RANK_GREEN_FIRST[healthOf(b)] || b.number - a.number,
+  "needs-work": (a, b) =>
+    HEALTH_RANK_WORK_FIRST[healthOf(a)] - HEALTH_RANK_WORK_FIRST[healthOf(b)] ||
+    workSeverity(b) - workSeverity(a) ||
+    b.number - a.number,
   size: (a, b) => b.additions + b.deletions - (a.additions + a.deletions),
 };
 

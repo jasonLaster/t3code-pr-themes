@@ -7,7 +7,7 @@ import { api } from "../convex/_generated/api";
 export type Pr = FunctionReturnType<typeof api.prs.since>["rows"][number];
 type Store = { syncId: number; rows: ReadonlyMap<number, Pr> };
 
-const CACHE_KEY = "prs-cache-v1";
+const CACHE_KEY = "prs-cache-v2";
 
 /**
  * Linear-style sync: boot from the IndexedDB cache, then subscribe to rows
