@@ -5,9 +5,12 @@ import {
   BarChart3Icon,
   CalendarIcon,
   CheckCircle2Icon,
+  ChevronDownIcon,
   CircleDashedIcon,
   CircleDotIcon,
   ClockIcon,
+  GitPullRequestDraftIcon,
+  GitPullRequestIcon,
   ListFilterIcon,
   ListIcon,
   MessageSquareWarningIcon,
@@ -80,6 +83,7 @@ import {
   type CiStatus,
   type Contributors,
   type CrStatus,
+  type FilterKey,
   type GroupBy,
   type Measure,
   type SegmentBy,
@@ -232,7 +236,6 @@ type CheckView = {
   key: "is" | "ci" | "cr";
   value: string;
   icon: ReactNode;
-  match: (pr: Pr) => boolean;
 };
 
 const CHECK_VIEWS: CheckView[] = [
@@ -242,7 +245,6 @@ const CHECK_VIEWS: CheckView[] = [
     key: "is",
     value: "green",
     icon: <CheckCircle2Icon className="size-3.5 shrink-0 text-(--status-pass)" aria-hidden="true" />,
-    match: (pr) => healthOf(pr) === "green",
   },
   {
     id: "needs-work",
@@ -250,7 +252,6 @@ const CHECK_VIEWS: CheckView[] = [
     key: "is",
     value: "needs-work",
     icon: <AlertCircleIcon className="size-3.5 shrink-0 text-(--status-fail)" aria-hidden="true" />,
-    match: (pr) => healthOf(pr) === "needs-work",
   },
   {
     id: "ci-fail",
@@ -258,7 +259,6 @@ const CHECK_VIEWS: CheckView[] = [
     key: "ci",
     value: "fail",
     icon: <XCircleIcon className="size-3.5 shrink-0 text-(--status-fail)" aria-hidden="true" />,
-    match: (pr) => ciOf(pr) === "fail",
   },
   {
     id: "cr-comments",
@@ -266,7 +266,6 @@ const CHECK_VIEWS: CheckView[] = [
     key: "cr",
     value: "comments",
     icon: <MessageSquareWarningIcon className="size-3.5 shrink-0 text-(--status-warn)" aria-hidden="true" />,
-    match: (pr) => crOf(pr) === "comments",
   },
   {
     id: "running",
@@ -274,9 +273,67 @@ const CHECK_VIEWS: CheckView[] = [
     key: "is",
     value: "running",
     icon: <ClockIcon className="size-3.5 shrink-0 text-(--status-pending)" aria-hidden="true" />,
-    match: (pr) => healthOf(pr) === "running",
   },
 ];
+
+/** The query after selecting a sidebar view: replaces author/tier filters, keeps everything else. */
+const withView = (q: string, v: (typeof VIEWS)[number]) =>
+  setOnly(q, ["author", "tier"], v.author ? { neg: false, key: "author", value: v.author } : v.tier ? { neg: false, key: "tier", value: v.tier } : undefined);
+
+/** The query after selecting a check view: check views are mutually exclusive, other filters are kept. */
+function withCheckView(q: string, cv: CheckView) {
+  const { tokens, words } = parseQuery(q);
+  const kept = tokens.filter((t) => t.key !== "ci" && t.key !== "cr" && !(t.key === "is" && HEALTH_IS.includes(t.value)));
+  return serialize([...kept, { neg: false, key: cv.key, value: cv.value }], words);
+}
+const HEALTH_IS = ["green", "needs-work", "running"];
+
+/** The query after selecting a theme: replaces theme filters, keeps everything else. */
+const withTheme = (q: string, slug: string) => setOnly(q, ["theme"], { neg: false, key: "theme", value: slug });
+
+/** The query after selecting a single-valued sidebar item: replaces that key's filters, keeps everything else. */
+const withOnly = (q: string, key: FilterKey, value: string) => setOnly(q, [key], { neg: false, key, value });
+
+const STATUS_VIEWS = [
+  { value: "ready", label: "Ready for review" },
+  { value: "draft", label: "Draft" },
+];
+const STATUS_IS = STATUS_VIEWS.map((s) => s.value);
+
+/** The query after selecting ready/draft: replaces only those `is:` values, so health filters stay. */
+function withStatus(q: string, value: string) {
+  const { tokens, words } = parseQuery(q);
+  return serialize([...tokens.filter((t) => !(t.key === "is" && STATUS_IS.includes(t.value))), { neg: false, key: "is", value }], words);
+}
+
+const SIDEBAR_COLLAPSED_KEY = "sidebar:collapsed";
+function readCollapsedGroups(): Set<string> {
+  try {
+    const raw = localStorage.getItem(SIDEBAR_COLLAPSED_KEY);
+    return new Set(raw ? (JSON.parse(raw) as string[]) : []);
+  } catch {
+    return new Set();
+  }
+}
+
+function SidebarGroup({ label, collapsed, onToggle, children }: { label: string; collapsed: boolean; onToggle: () => void; children: ReactNode }) {
+  return (
+    <div className="space-y-px">
+      <button
+        onClick={onToggle}
+        aria-expanded={!collapsed}
+        className="group/header flex h-6 w-full cursor-default items-center gap-1 rounded-md px-2 text-left text-xs text-muted-foreground hover:bg-sidebar-accent hover:text-sidebar-foreground"
+      >
+        {label}
+        <ChevronDownIcon
+          className={cn("size-3 opacity-0 transition-transform group-hover/header:opacity-100 group-focus-visible/header:opacity-100", collapsed && "-rotate-90 opacity-100")}
+          aria-hidden="true"
+        />
+      </button>
+      {!collapsed && children}
+    </div>
+  );
+}
 
 function SidebarItem({ active, onClick, children, count }: { active: boolean; onClick: () => void; children: ReactNode; count: number }) {
   return (
@@ -312,6 +369,18 @@ export function App() {
   const [collapsed, setCollapsed] = useState<ReadonlySet<string>>(new Set());
   const [palette, setPalette] = useState(false);
   const [help, setHelp] = useState(false);
+  const [collapsedGroups, setCollapsedGroups] = useState<ReadonlySet<string>>(readCollapsedGroups);
+  const toggleGroup = (label: string) =>
+    setCollapsedGroups((cur) => {
+      const next = new Set(cur);
+      if (!next.delete(label)) next.add(label);
+      try {
+        localStorage.setItem(SIDEBAR_COLLAPSED_KEY, JSON.stringify([...next]));
+      } catch {
+        // Collapsed groups are a per-viewer convenience; ignore storage failures.
+      }
+      return next;
+    });
   const searchRef = useRef<HTMLInputElement>(null);
   const listRef = useRef<HTMLDivElement>(null);
   const filterRef = useRef<HTMLDivElement>(null);
@@ -512,25 +581,37 @@ export function App() {
   }, []);
 
   const facets = useMemo<Facet[]>(() => {
-    const countBy = (fn: (pr: Pr) => string, source = all) => {
-      const m = new Map<string, number>();
-      for (const pr of source) m.set(fn(pr), (m.get(fn(pr)) ?? 0) + 1);
+    // Like Linear, a property's counts respect every other active filter (and search words) but not
+    // its own, so each number is what picking that value would show. Options come from all PRs so
+    // a value never disappears from the menu just because the current filters hide it.
+    const scopedMatch = (key: FilterKey) => makeMatcher(setOnly(deferredQ, [key]), contributors, asOf);
+    const scoped = (key: FilterKey) => all.filter(scopedMatch(key));
+    const countBy = (prs: Pr[], fn: (pr: Pr) => string, options: Iterable<string> = []) => {
+      const m = new Map<string, number>([...options].map((o) => [o, 0]));
+      for (const pr of prs) m.set(fn(pr), (m.get(fn(pr)) ?? 0) + 1);
       return m;
     };
-    const authors = [...countBy((pr) => pr.author)].sort((a, b) => b[1] - a[1]);
-    const tiers = countBy((pr) => tierOf(pr.author, contributors));
-    const themes = countBy((pr) => pr.theme);
-    const kinds = [...countBy((pr) => pr.kind || "other")].sort((a, b) => b[1] - a[1]);
-    const stateCounts = countBy(stateOf);
+    const byCount = (m: Map<string, number>) => [...m].sort((a, b) => b[1] - a[1]);
+    const authors = byCount(countBy(scoped("author"), (pr) => pr.author, new Set(all.map((pr) => pr.author))));
+    const tiers = countBy(scoped("tier"), (pr) => tierOf(pr.author, contributors));
+    const themes = countBy(scoped("theme"), (pr) => pr.theme);
+    const kinds = byCount(countBy(scoped("type"), (pr) => pr.kind || "other", new Set(all.map((pr) => pr.kind || "other"))));
+    const stateCounts = countBy(scoped("state"), stateOf);
+    // Open PRs are always synced, so their count is exact even while viewing merged/closed history.
+    const openMatch = scopedMatch("state");
+    const openCount = rows ? [...rows.values()].filter(openMatch).length : undefined;
     const labels = new Map<string, number>();
-    for (const pr of all) {
+    for (const pr of scoped("label")) {
       if ("labels" in pr) for (const label of pr.labels) labels.set(label, (labels.get(label) ?? 0) + 1);
     }
-    const openRows = all.filter((pr) => pr.open);
-    const ciCounts = countBy(ciOf, openRows);
-    const crCounts = countBy(crOf, openRows);
-    const healthCounts = countBy(healthOf, openRows);
-    const drafts = all.filter((pr) => pr.draft).length;
+    // Check status only exists for open PRs.
+    const ciCounts = countBy(scoped("ci").filter((pr) => pr.open), ciOf);
+    const crCounts = countBy(scoped("cr").filter((pr) => pr.open), crOf);
+    const hasCrError = all.some((pr) => pr.open && crOf(pr) === "error");
+    const isScoped = scoped("is");
+    const healthCounts = countBy(isScoped.filter((pr) => pr.open), healthOf);
+    const drafts = isScoped.filter((pr) => pr.draft).length;
+    const openedScoped = scoped("opened");
     const tierWho: Record<Tier, Who> = { maintainer: "maintainer", vouched: "vouched", community: "community", denounced: "community" };
     const options: Facet[] = [
       {
@@ -540,7 +621,7 @@ export function App() {
         icon: CircleDotIcon,
         values: PR_STATES.map((state) => ({
           value: state, label: STATE_LABEL[state],
-          count: state === "open" ? rows?.size : states.includes(state) && !historyLoading ? stateCounts.get(state) ?? 0 : undefined,
+          count: state === "open" ? openCount : states.includes(state) && !historyLoading ? stateCounts.get(state) ?? 0 : undefined,
         })),
       },
       {
@@ -567,7 +648,7 @@ export function App() {
         label: "CodeRabbit",
         plural: "CodeRabbit states",
         icon: MessageSquareWarningIcon,
-        values: CR_STATUSES.filter((s) => s !== "error" || (crCounts.get(s) ?? 0) > 0).map((s) => ({
+        values: CR_STATUSES.filter((s) => s !== "error" || hasCrError).map((s) => ({
           value: s,
           label: CR_LABEL[s],
           count: crCounts.get(s) ?? 0,
@@ -583,7 +664,7 @@ export function App() {
           { value: "green", label: "Green", count: healthCounts.get("green") ?? 0, leading: <HealthDot health="green" /> },
           { value: "needs-work", label: "Needs work", count: healthCounts.get("needs-work") ?? 0, leading: <HealthDot health="needs-work" /> },
           { value: "running", label: "Running", count: healthCounts.get("running") ?? 0, leading: <HealthDot health="running" /> },
-          { value: "ready", label: "Ready for review", count: all.length - drafts },
+          { value: "ready", label: "Ready for review", count: isScoped.length - drafts },
           { value: "draft", label: "Draft", count: drafts },
         ],
       },
@@ -624,30 +705,42 @@ export function App() {
         values: RANGES.map((r) => ({
           value: r.value,
           label: r.label,
-          count: all.filter((pr) => Date.parse(pr.createdAt) >= asOf - Number.parseInt(r.value) * 864e5).length,
+          count: openedScoped.filter((pr) => Date.parse(pr.createdAt) >= asOf - Number.parseInt(r.value) * 864e5).length,
         })),
       },
     ];
     return historyAvailable ? options : options.filter(({ key }) => key !== "state" && key !== "label");
-  }, [all, contributors, asOf, states, rows, historyLoading, historyAvailable]);
+  }, [all, deferredQ, contributors, asOf, states, rows, historyLoading, historyAvailable]);
 
   const { tokens } = parseQuery(q);
   const people = tokens.filter((t) => t.key === "author" || t.key === "tier");
   const activeView = VIEWS.find((v) =>
     !v.author && !v.tier ? people.length === 0 : people.length === 1 && !people[0].neg && people[0].value === (v.author ?? v.tier),
   );
-  const viewCount = (v: (typeof VIEWS)[number]) =>
-    !v.author && !v.tier ? all.length : all.filter((pr) => (v.author ? pr.author.toLowerCase() === ALIASES[v.author] : tierOf(pr.author, contributors) === v.tier)).length;
-
-  const checkViewCounts = useMemo(
-    () => Object.fromEntries(CHECK_VIEWS.map((cv) => [cv.id, all.filter(cv.match).length])),
-    [all],
-  );
-  const themeCounts = useMemo(() => {
+  // Like Linear, each sidebar count is what you'd see after selecting that item: the other active
+  // filters (and search words) still apply, only the item's own facet is swapped out.
+  // PR types come from title prefixes (feat, fix, …); list the most common ones, busiest first.
+  const sidebarTypes = useMemo(() => {
     const m = new Map<string, number>();
-    for (const pr of all) m.set(pr.theme, (m.get(pr.theme) ?? 0) + 1);
-    return m;
+    for (const pr of all) if (pr.kind) m.set(pr.kind, (m.get(pr.kind) ?? 0) + 1);
+    return [...m].sort((a, b) => b[1] - a[1]).slice(0, 8).map(([k]) => k);
   }, [all]);
+  const sidebarCounts = useMemo(() => {
+    const count = (query: string) => {
+      const match = makeMatcher(query, contributors, asOf);
+      let n = 0;
+      for (const pr of all) if (match(pr)) n++;
+      return n;
+    };
+    return {
+      views: VIEWS.map((v) => count(withView(deferredQ, v))),
+      checks: Object.fromEntries(CHECK_VIEWS.map((cv) => [cv.id, count(withCheckView(deferredQ, cv))])) as Record<string, number>,
+      themes: Object.fromEntries(THEMES.map((t) => [t.slug, count(withTheme(deferredQ, t.slug))])) as Record<string, number>,
+      statuses: Object.fromEntries(STATUS_VIEWS.map((st) => [st.value, count(withStatus(deferredQ, st.value))])) as Record<string, number>,
+      types: Object.fromEntries(sidebarTypes.map((k) => [k, count(withOnly(deferredQ, "type", k))])) as Record<string, number>,
+      opened: Object.fromEntries(RANGES.map((r) => [r.value, count(withOnly(deferredQ, "opened", r.value))])) as Record<string, number>,
+    };
+  }, [all, deferredQ, contributors, asOf, sidebarTypes]);
 
   const drillDown = (slice: SliceBy, filterValue: string, who?: Who) => {
     setQ((cur) => applyInsightDrillDown(cur, slice, filterValue, who));
@@ -684,13 +777,7 @@ export function App() {
       if (isActive(cur, cv.key, cv.value)) {
         return toggleToken(cur, cv.key, cv.value);
       }
-      // Replace mutually exclusive check-view filters while preserving author/tier/theme filters.
-      const cleaned = setOnly(cur, ["ci", "cr"]);
-      const withoutHealthIs = serialize(
-        parseQuery(cleaned).tokens.filter((t) => !(t.key === "is" && ["green", "needs-work", "running"].includes(t.value))),
-        parseQuery(cleaned).words,
-      );
-      return toggleToken(withoutHealthIs, cv.key, cv.value);
+      return withCheckView(cur, cv);
     });
   };
 
@@ -712,53 +799,91 @@ export function App() {
             <Kbd className="ml-auto">⌘K</Kbd>
           </button>
         </div>
-        <nav className="flex-1 space-y-5 overflow-y-auto px-3 pb-4" aria-label="Views">
-          <div className="space-y-px">
-            <div className="px-2 pb-1 text-xs text-muted-foreground">Views</div>
-            {VIEWS.map((v) => (
+        <nav className="flex-1 space-y-4 overflow-y-auto px-3 pb-4" aria-label="Views">
+          <SidebarGroup label="Views" collapsed={collapsedGroups.has("Views")} onToggle={() => toggleGroup("Views")}>
+            {VIEWS.map((v, i) => (
               <SidebarItem
                 key={v.label}
                 active={activeView === v}
-                count={viewCount(v)}
-                onClick={() =>
-                  setQ((cur) => setOnly(cur, ["author", "tier"], v.author ? { neg: false, key: "author", value: v.author } : v.tier ? { neg: false, key: "tier", value: v.tier } : undefined))
-                }
+                count={sidebarCounts.views[i]}
+                onClick={() => setQ((cur) => withView(cur, v))}
               >
                 {v.who ? <Dot who={v.who} /> : v.tier ? <span className="size-2 rounded-full border border-destructive" /> : <span className="size-2" />}
                 {v.label}
               </SidebarItem>
             ))}
-          </div>
-          <div className="space-y-px">
-            <div className="px-2 pb-1 text-xs text-muted-foreground">Checks</div>
+          </SidebarGroup>
+          <SidebarGroup label="Checks" collapsed={collapsedGroups.has("Checks")} onToggle={() => toggleGroup("Checks")}>
             {CHECK_VIEWS.map((cv) => (
               <SidebarItem
                 key={cv.id}
                 active={isActive(q, cv.key, cv.value)}
-                count={checkViewCounts[cv.id] ?? 0}
+                count={sidebarCounts.checks[cv.id] ?? 0}
                 onClick={() => toggleCheckView(cv)}
               >
                 {cv.icon}
                 <span className="truncate">{cv.label}</span>
               </SidebarItem>
             ))}
-          </div>
-          <div className="space-y-px">
-            <div className="px-2 pb-1 text-xs text-muted-foreground">Themes</div>
+          </SidebarGroup>
+          <SidebarGroup label="Status" collapsed={collapsedGroups.has("Status")} onToggle={() => toggleGroup("Status")}>
+            {STATUS_VIEWS.map((st) => (
+              <SidebarItem
+                key={st.value}
+                active={isActive(q, "is", st.value)}
+                count={sidebarCounts.statuses[st.value] ?? 0}
+                onClick={() => setQ((cur) => (isActive(cur, "is", st.value) ? toggleToken(cur, "is", st.value) : withStatus(cur, st.value)))}
+              >
+                {st.value === "draft" ? (
+                  <GitPullRequestDraftIcon className="size-3.5 shrink-0 text-muted-foreground" aria-hidden="true" />
+                ) : (
+                  <GitPullRequestIcon className="size-3.5 shrink-0 text-muted-foreground" aria-hidden="true" />
+                )}
+                <span className="truncate">{st.label}</span>
+              </SidebarItem>
+            ))}
+          </SidebarGroup>
+          <SidebarGroup label="Themes" collapsed={collapsedGroups.has("Themes")} onToggle={() => toggleGroup("Themes")}>
             {THEMES.map((t) => (
               <SidebarItem
                 key={t.slug}
                 active={isActive(q, "theme", t.slug) && tokens.filter((x) => x.key === "theme").length === 1}
-                count={themeCounts.get(t.name) ?? 0}
-                onClick={() =>
-                  setQ((cur) => (isActive(cur, "theme", t.slug) ? setOnly(cur, ["theme"]) : setOnly(cur, ["theme"], { neg: false, key: "theme", value: t.slug })))
-                }
+                count={sidebarCounts.themes[t.slug] ?? 0}
+                onClick={() => setQ((cur) => (isActive(cur, "theme", t.slug) ? setOnly(cur, ["theme"]) : withTheme(cur, t.slug)))}
               >
                 <TagIcon className="size-3 text-muted-foreground" aria-hidden="true" />
                 <span className="truncate">{t.name}</span>
               </SidebarItem>
             ))}
-          </div>
+          </SidebarGroup>
+          {sidebarTypes.length > 0 && (
+            <SidebarGroup label="Types" collapsed={collapsedGroups.has("Types")} onToggle={() => toggleGroup("Types")}>
+              {sidebarTypes.map((k) => (
+                <SidebarItem
+                  key={k}
+                  active={isActive(q, "type", k) && tokens.filter((x) => x.key === "type").length === 1}
+                  count={sidebarCounts.types[k] ?? 0}
+                  onClick={() => setQ((cur) => (isActive(cur, "type", k) ? setOnly(cur, ["type"]) : withOnly(cur, "type", k)))}
+                >
+                  <ShapesIcon className="size-3 text-muted-foreground" aria-hidden="true" />
+                  <span className="truncate">{k}</span>
+                </SidebarItem>
+              ))}
+            </SidebarGroup>
+          )}
+          <SidebarGroup label="Opened" collapsed={collapsedGroups.has("Opened")} onToggle={() => toggleGroup("Opened")}>
+            {RANGES.map((r) => (
+              <SidebarItem
+                key={r.value}
+                active={isActive(q, "opened", r.value)}
+                count={sidebarCounts.opened[r.value] ?? 0}
+                onClick={() => setQ((cur) => (isActive(cur, "opened", r.value) ? setOnly(cur, ["opened"]) : withOnly(cur, "opened", r.value)))}
+              >
+                <CalendarIcon className="size-3 text-muted-foreground" aria-hidden="true" />
+                <span className="truncate">{r.label}</span>
+              </SidebarItem>
+            ))}
+          </SidebarGroup>
         </nav>
         <div className="flex items-center gap-2 px-5 py-3 text-xs text-muted-foreground" title={status?.lastError ?? undefined}>
           <span className={cn("size-1.5 rounded-full", status?.lastError ? "bg-destructive" : "bg-(--maintainer)")} />
