@@ -1,18 +1,18 @@
-import { SlidersHorizontalIcon } from "lucide-react";
+import { BarChart3Icon, ListIcon, SlidersHorizontalIcon } from "lucide-react";
 import { buttonVariants } from "@/components/ui/button";
 import { Popover, PopoverContent, PopoverTitle, PopoverTrigger } from "@/components/ui/popover";
-import { Switch } from "@/components/ui/switch";
+import { SegmentedControl, SegmentedControlIndicator, SegmentedControlItem } from "@/components/ui/segmented-control";
 import { Select, SelectContent, SelectItem, SelectLabel, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { cn } from "@/lib/utils";
-import { GROUP_LABEL, SORT_LABEL, type GroupBy, type SortBy } from "@/model";
+import { GROUP_LABEL, SORT_LABEL, type GroupBy, type SortBy, type ViewMode } from "@/model";
 
 type Props = {
+  view: ViewMode;
+  setView: (v: ViewMode) => void;
   group: GroupBy;
   setGroup: (g: GroupBy) => void;
   sort: SortBy;
   setSort: (s: SortBy) => void;
-  insights: boolean;
-  setInsights: (v: boolean) => void;
 };
 
 const groupItems = (Object.keys(GROUP_LABEL) as GroupBy[]).map((value) => ({ value, label: GROUP_LABEL[value] }));
@@ -27,7 +27,7 @@ function Row({ label, children }: { label: string; children: React.ReactNode }) 
   );
 }
 
-export function DisplayMenu({ group, setGroup, sort, setSort, insights, setInsights }: Props) {
+export function DisplayMenu({ view, setView, group, setGroup, sort, setSort }: Props) {
   return (
     <Popover>
       <PopoverTrigger className={cn(buttonVariants({ variant: "outline" }))}>
@@ -36,6 +36,22 @@ export function DisplayMenu({ group, setGroup, sort, setSort, insights, setInsig
       </PopoverTrigger>
       <PopoverContent align="end" className="w-72 space-y-3 p-3 text-[13px]">
         <PopoverTitle className="sr-only">Display options</PopoverTitle>
+        <SegmentedControl
+          aria-label="View layout"
+          value={view}
+          onValueChange={(v) => v && setView(v as ViewMode)}
+          className="grid h-12 w-full grid-cols-2 p-1"
+        >
+          <SegmentedControlIndicator />
+          <SegmentedControlItem value="list" className="flex-col gap-0.5 text-xs">
+            <ListIcon aria-hidden="true" />
+            List
+          </SegmentedControlItem>
+          <SegmentedControlItem value="insights" className="flex-col gap-0.5 text-xs">
+            <BarChart3Icon aria-hidden="true" />
+            Insights
+          </SegmentedControlItem>
+        </SegmentedControl>
         <Row label="Grouping">
           <Select items={groupItems} value={group} onValueChange={(v) => v && setGroup(v as GroupBy)}>
             <SelectLabel className="text-muted-foreground">Grouping</SelectLabel>
@@ -44,7 +60,9 @@ export function DisplayMenu({ group, setGroup, sort, setSort, insights, setInsig
             </SelectTrigger>
             <SelectContent>
               {groupItems.map((i) => (
-                <SelectItem key={i.value} value={i.value}>{i.label}</SelectItem>
+                <SelectItem key={i.value} value={i.value}>
+                  {i.label}
+                </SelectItem>
               ))}
             </SelectContent>
           </Select>
@@ -57,15 +75,13 @@ export function DisplayMenu({ group, setGroup, sort, setSort, insights, setInsig
             </SelectTrigger>
             <SelectContent>
               {sortItems.map((i) => (
-                <SelectItem key={i.value} value={i.value}>{i.label}</SelectItem>
+                <SelectItem key={i.value} value={i.value}>
+                  {i.label}
+                </SelectItem>
               ))}
             </SelectContent>
           </Select>
         </Row>
-        <label className="flex items-center justify-between gap-3 border-t border-border pt-3">
-          <span>Show insights chart</span>
-          <Switch checked={insights} onCheckedChange={setInsights} />
-        </label>
       </PopoverContent>
     </Popover>
   );

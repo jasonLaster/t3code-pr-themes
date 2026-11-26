@@ -1,10 +1,36 @@
-import { ArrowUpRightIcon, ChevronRightIcon, GitPullRequestIcon, LayersIcon, ListOrderedIcon, BarChart3Icon, XIcon, CheckIcon, LinkIcon, UserIcon } from "lucide-react";
+import {
+  ArrowUpRightIcon,
+  BarChart3Icon,
+  CheckIcon,
+  ChevronRightIcon,
+  GitPullRequestIcon,
+  LayersIcon,
+  LinkIcon,
+  ListIcon,
+  ListOrderedIcon,
+  PieChartIcon,
+  RulerIcon,
+  UserIcon,
+  XIcon,
+} from "lucide-react";
 import { useMemo, useState } from "react";
 import type { Facet } from "@/components/filters";
 import { Command, CommandEmpty, CommandGroup, CommandGroupLabel, CommandInput, CommandItem, CommandList, CommandPage } from "@/components/ui/command";
 import { Dialog, DialogBackdrop, DialogContent, DialogTitle } from "@/components/ui/dialog";
 import { Kbd } from "@/components/ui/kbd";
-import { GROUP_LABEL, SORT_LABEL, isActive, toggleToken, type GroupBy, type SortBy } from "@/model";
+import {
+  GROUP_LABEL,
+  MEASURE_LABEL,
+  SLICE_LABEL,
+  SORT_LABEL,
+  isActive,
+  toggleToken,
+  type GroupBy,
+  type Measure,
+  type SliceBy,
+  type SortBy,
+  type ViewMode,
+} from "@/model";
 import type { Pr } from "@/sync";
 
 type Props = {
@@ -14,20 +40,37 @@ type Props = {
   facets: Facet[];
   q: string;
   setQ: (update: (q: string) => string) => void;
+  view: ViewMode;
+  setView: (v: ViewMode) => void;
   setGroup: (g: GroupBy) => void;
   setSort: (s: SortBy) => void;
-  toggleInsights: () => void;
+  setMeasure: (m: Measure) => void;
+  setSlice: (s: SliceBy) => void;
   selected: Pr | null;
   openPr: (n: number) => void;
 };
 
 const prUrl = (n: number) => `https://github.com/pingdotgg/t3code/pull/${n}`;
 
-export function CommandPalette({ open, onOpenChange, prs, facets, q, setQ, setGroup, setSort, toggleInsights, selected, openPr }: Props) {
+export function CommandPalette({
+  open,
+  onOpenChange,
+  prs,
+  facets,
+  q,
+  setQ,
+  view,
+  setView,
+  setGroup,
+  setSort,
+  setMeasure,
+  setSlice,
+  selected,
+  openPr,
+}: Props) {
   const [query, setQuery] = useState("");
   const [pages, setPages] = useState<string[]>([]);
 
-  // Only the best few PR matches become commands; thousands of items would swamp the list.
   const matches = useMemo(() => {
     const needle = query.trim().toLowerCase().replace(/^#/, "");
     if (pages.length || needle.length < 2) return [];
@@ -106,6 +149,25 @@ export function CommandPalette({ open, onOpenChange, prs, facets, q, setQ, setGr
               </CommandGroup>
               <CommandGroup>
                 <CommandGroupLabel>View</CommandGroupLabel>
+                <CommandItem
+                  value="insights"
+                  label={view === "insights" ? "Switch to List view" : "Switch to Insights view"}
+                  onSelect={run(() => setView(view === "insights" ? "list" : "insights"))}
+                >
+                  {view === "insights" ? <ListIcon /> : <BarChart3Icon />}
+                  <span className="flex-1">{view === "insights" ? "Switch to List view" : "Switch to Insights view"}</span>
+                  <Kbd>I</Kbd>
+                </CommandItem>
+                <CommandItem value="slice" page="slice" label="Insights: Slice by">
+                  <PieChartIcon />
+                  <span className="flex-1">Insights: Slice by…</span>
+                  <ChevronRightIcon />
+                </CommandItem>
+                <CommandItem value="measure" page="measure" label="Insights: Measure">
+                  <RulerIcon />
+                  <span className="flex-1">Insights: Measure…</span>
+                  <ChevronRightIcon />
+                </CommandItem>
                 <CommandItem value="group" page="group" label="Group by">
                   <LayersIcon />
                   <span className="flex-1">Group by…</span>
@@ -115,11 +177,6 @@ export function CommandPalette({ open, onOpenChange, prs, facets, q, setQ, setGr
                   <ListOrderedIcon />
                   <span className="flex-1">Order by…</span>
                   <ChevronRightIcon />
-                </CommandItem>
-                <CommandItem value="insights" label="Toggle insights chart" onSelect={run(toggleInsights)}>
-                  <BarChart3Icon />
-                  <span className="flex-1">Toggle insights chart</span>
-                  <Kbd>I</Kbd>
                 </CommandItem>
               </CommandGroup>
             </CommandPage>
@@ -144,6 +201,36 @@ export function CommandPalette({ open, onOpenChange, prs, facets, q, setQ, setGr
                 ))}
               </CommandPage>
             ))}
+            <CommandPage value="slice">
+              {(Object.keys(SLICE_LABEL) as SliceBy[]).map((s) => (
+                <CommandItem
+                  key={s}
+                  value={`slice:${s}`}
+                  label={SLICE_LABEL[s]}
+                  onSelect={run(() => {
+                    setSlice(s);
+                    setView("insights");
+                  })}
+                >
+                  {SLICE_LABEL[s]}
+                </CommandItem>
+              ))}
+            </CommandPage>
+            <CommandPage value="measure">
+              {(Object.keys(MEASURE_LABEL) as Measure[]).map((m) => (
+                <CommandItem
+                  key={m}
+                  value={`measure:${m}`}
+                  label={MEASURE_LABEL[m]}
+                  onSelect={run(() => {
+                    setMeasure(m);
+                    setView("insights");
+                  })}
+                >
+                  {MEASURE_LABEL[m]}
+                </CommandItem>
+              ))}
+            </CommandPage>
             <CommandPage value="group">
               {(Object.keys(GROUP_LABEL) as GroupBy[]).map((g) => (
                 <CommandItem key={g} value={`group:${g}`} label={GROUP_LABEL[g]} onSelect={run(() => setGroup(g))}>
