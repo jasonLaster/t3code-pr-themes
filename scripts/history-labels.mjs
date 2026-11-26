@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { existsSync, mkdirSync, readFileSync, readdirSync, renameSync, writeFileSync } from "node:fs";
-import { PR_KINDS, PR_LABELS, kindOf } from "../shared/history.ts";
+import { inferHistoryLabels, PR_KINDS, PR_LABELS, kindOf } from "../shared/history.ts";
 import { THEME_LIST, themeOf } from "../shared/themes.ts";
 
 const pagesDir = ".pr-backfill/pages";
@@ -38,10 +38,8 @@ function validate(rows, values, complete = true) {
 }
 
 const themeSlugs = new Map(THEME_LIST.map(({ name, slug }) => [name, slug]));
-const labelPattern = new RegExp(`\\b(${PR_LABELS.join("|")})\\b`, "gi");
 function inferClassification({ title }) {
-  const labels = [...new Set([...title.matchAll(labelPattern)].map(([label]) => label.toLowerCase()))].slice(0, 3);
-  return { theme: themeSlugs.get(themeOf(title)), kind: kindOf(title), labels, labelSource: "inferred" };
+  return { theme: themeSlugs.get(themeOf(title)), kind: kindOf(title), labels: inferHistoryLabels(title), labelSource: "inferred" };
 }
 
 const [command, batch, input] = process.argv.slice(2);

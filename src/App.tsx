@@ -498,10 +498,15 @@ export function App() {
   const visibleGroups = useMemo(() => {
     if (!showHistory) return groups;
     let remaining = historyLimit;
+    const pageByState = group === "state";
+    let expanded = groups.filter((g) => !collapsed.has(`${group}:${g.value}`)).length;
     return groups.flatMap((g): Group[] => {
-      if (remaining <= 0) return [];
+      if (!pageByState && remaining <= 0) return [];
       if (collapsed.has(`${group}:${g.value}`)) return [g];
-      const prs = g.prs.slice(0, remaining);
+      // Keep every state reachable while retaining a single list page budget.
+      const limit = pageByState ? Math.floor(remaining / expanded) : remaining;
+      expanded--;
+      const prs = g.prs.slice(0, limit);
       remaining -= prs.length;
       return [{ ...g, prs }];
     });
@@ -510,9 +515,14 @@ export function App() {
     () => visibleGroups.flatMap((g) => (collapsed.has(`${group}:${g.value}`) ? [] : g.prs)),
     [visibleGroups, group, collapsed],
   );
-  const paneRow = pane ? all.find((pr) => pr.number === pane) : undefined;
+  const paneInLists = pane ? rows?.get(pane) ?? all.find((pr) => pr.number === pane) : undefined;
+  const lookupNumber = !paneInLists && status?.historyLookupAvailable === true ? pane : null;
+  const bookmarked = useQuery(api.prHistory.byNumber, lookupNumber ? { number: lookupNumber } : "skip");
+  const paneRow = paneInLists ?? bookmarked ?? undefined;
+  const paneLoading = pane !== null && !paneInLists &&
+    (status === undefined || (lookupNumber !== null && bookmarked === undefined));
   const paneChecksAvailable = paneRow?.open && (historyAvailable || paneRow.ci !== undefined || paneRow.cr !== undefined);
-  const selectedRow = selected ? all.find((pr) => pr.number === selected) ?? null : null;
+  const selectedRow = selected === pane ? paneRow ?? null : all.find((pr) => pr.number === selected) ?? null;
 
   const openPr = (n: number) => {
     setSelected(n);
@@ -1171,7 +1181,7 @@ export function App() {
                 </>
               ) : (
                 <p className="text-[13px] text-muted-foreground">
-                  {loading ? "Loading pull request…" : `PR #${pane} is unavailable in this view.`}{" "}
+                  {loading || paneLoading ? "Loading pull request…" : `PR #${pane} is unavailable.`}{" "}
                   <button className="underline" onClick={closePane}>Close</button>
                 </p>
               )}

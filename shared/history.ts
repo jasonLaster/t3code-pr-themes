@@ -10,6 +10,13 @@ export const PR_LABELS = [
 ] as const;
 export type PrLabel = (typeof PR_LABELS)[number];
 
+const historyLabelPattern = new RegExp(`\\b(${PR_LABELS.join("|")})\\b`, "gi");
+
+export function inferHistoryLabels(title: string): PrLabel[] {
+  const matches = [...title.matchAll(historyLabelPattern)].map(([label]) => label.toLowerCase() as PrLabel);
+  return [...new Set(matches)].slice(0, 3);
+}
+
 export const PR_KINDS = [
   "feat", "fix", "perf", "refactor", "docs", "test", "build",
   "ci", "chore", "style", "revert", "other",

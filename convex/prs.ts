@@ -47,7 +47,7 @@ export const status = query({
   args: {},
   handler: async (ctx) => {
     const s = await ctx.db.query("status").first();
-    return { fetchedAt: s?.fetchedAt ?? null, lastError: s?.lastError ?? null, historyAvailable: true };
+    return { fetchedAt: s?.fetchedAt ?? null, lastError: s?.lastError ?? null, historyAvailable: true, historyLookupAvailable: true };
   },
 });
 
@@ -279,6 +279,7 @@ const sameRow = (doc: Doc<"prs">, row: SaveRow) =>
 /** Upserts PR rows, tombstones closed ones, and returns PR numbers whose body changed. */
 export const save = internalMutation({
   args: {
+    historySyncFailed: v.optional(v.boolean()),
     rows: v.array(
       v.object({
         ...prFields,
@@ -300,7 +301,7 @@ export const save = internalMutation({
       }),
     ),
   },
-  handler: async (ctx, { rows, contributors }) => {
+  handler: async (ctx, { rows, contributors, historySyncFailed }) => {
     const status = await getStatus(ctx);
     let syncId = status.syncId ?? 0;
     const open = new Map(
@@ -321,6 +322,10 @@ export const save = internalMutation({
       }
     }
     for (const closed of open.values()) {
+      if (historySyncFailed) {
+        const history = await ctx.db.query("prHistory").withIndex("by_number", (q) => q.eq("number", closed.number)).unique();
+        if (!history || history.updatedAt < closed.updatedAt) continue;
+      }
       await ctx.db.patch(closed._id, { open: false, syncId: ++syncId });
       const body = await ctx.db
         .query("bodies")

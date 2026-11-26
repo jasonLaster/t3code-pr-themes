@@ -1,7 +1,9 @@
 import { v } from "convex/values";
-import { internal } from "./_generated/api";
-import { internalAction } from "./_generated/server";
-import { themeOf } from "../shared/themes";
+import { api, internal } from "./_generated/api";
+import { internalAction, type ActionCtx } from "./_generated/server";
+import type { Doc } from "./_generated/dataModel";
+import { inferHistoryLabels, kindOf } from "../shared/history";
+import { THEME_LIST, themeOf } from "../shared/themes";
 
 const REPO = { owner: "pingdotgg", name: "t3code" };
 const BODY_BATCH = 200;
@@ -11,6 +13,8 @@ const CR_REFRESH_CAP = 100;
 const CR_BACKFILL_CAP = 100;
 const CR_BACKFILL_DELAY_MS = 25_000;
 const CODERABBIT_LOGIN = "coderabbitai";
+const HISTORY_OVERLAP_MS = 2 * 60_000;
+const themeSlugs = new Map(THEME_LIST.map(({ name, slug }) => [name, slug]));
 
 type CiStatus = "pass" | "fail" | "pending" | "none";
 type CrStatus = "clean" | "comments" | "pending" | "skipped" | "error" | "none";
@@ -97,6 +101,25 @@ type MergePage = {
   repository: { pullRequests: {
     pageInfo: { hasNextPage: boolean; endCursor: string | null };
     nodes: { number: number; headRefOid: string; mergeable: string; mergeStateStatus: string; reviewDecision: string | null }[];
+  } };
+};
+
+const HISTORY_QUERY = `query($owner:String!,$name:String!,$after:String){
+  repository(owner:$owner,name:$name){
+    pullRequests(first:100,after:$after,orderBy:{field:UPDATED_AT,direction:DESC}){
+      pageInfo{hasNextPage endCursor}
+      nodes{number title state isDraft createdAt updatedAt closedAt mergedAt additions deletions author{login}}
+    }
+  }
+}`;
+type HistoryPage = {
+  repository: { pullRequests: {
+    pageInfo: { hasNextPage: boolean; endCursor: string | null };
+    nodes: (Pick<GithubPr, "number" | "title" | "isDraft" | "createdAt" | "updatedAt" | "additions" | "deletions" | "author"> & {
+      state: "OPEN" | "CLOSED" | "MERGED";
+      closedAt: string | null;
+      mergedAt: string | null;
+    })[];
   } };
 };
 
@@ -234,6 +257,52 @@ async function fetchRepo(token: string) {
     after = repo.pullRequests.pageInfo.hasNextPage ? repo.pullRequests.pageInfo.endCursor : null;
   } while (after);
   return { prs, files };
+}
+
+async function syncRecentHistory(ctx: ActionCtx, token: string) {
+  const snapshot = await ctx.runQuery(api.prHistory.snapshot, {});
+  if (!snapshot) return;
+  const cutoff = new Date().toISOString().slice(0, 19) + "Z";
+  const since = new Date(Date.parse(snapshot.cutoff) - HISTORY_OVERLAP_MS).toISOString();
+  let after: string | null = null;
+  do {
+    const page: HistoryPage["repository"]["pullRequests"] =
+      (await graphql<HistoryPage>(token, HISTORY_QUERY, { ...REPO, after }, 2)).repository.pullRequests;
+    const rows: Omit<Doc<"prHistory">, "_id" | "_creationTime">[] = [];
+    const reopened: { number: number; updatedAt: string }[] = [];
+    for (const pr of page.nodes) {
+      if (pr.updatedAt < since || pr.updatedAt > cutoff) continue;
+      if (pr.state === "OPEN") {
+        reopened.push({ number: pr.number, updatedAt: pr.updatedAt });
+        continue;
+      }
+      if (!pr.closedAt || (pr.state === "MERGED") !== (pr.mergedAt !== null)) {
+        throw new Error(`Missing GitHub history timestamps for PR #${pr.number}`);
+      }
+      rows.push({
+        number: pr.number,
+        title: pr.title,
+        state: pr.state === "MERGED" ? "merged" : "closed",
+        draft: pr.isDraft,
+        createdAt: pr.createdAt,
+        updatedAt: pr.updatedAt,
+        closedAt: pr.closedAt,
+        mergedAt: pr.mergedAt,
+        additions: pr.additions,
+        deletions: pr.deletions,
+        author: pr.author?.login ?? "ghost",
+        theme: themeSlugs.get(themeOf(pr.title)) ?? "other",
+        kind: kindOf(pr.title),
+        labels: inferHistoryLabels(pr.title),
+        labelSource: "inferred",
+      });
+    }
+    if (rows.length || reopened.length) await ctx.runMutation(internal.prHistory.saveRecent, { rows, reopened });
+    if (!page.pageInfo.hasNextPage || (page.nodes.at(-1)?.updatedAt ?? "") < since) break;
+    after = page.pageInfo.endCursor;
+    if (!after) throw new Error("GitHub history page has no continuation cursor");
+  } while (after);
+  await ctx.runMutation(internal.prHistory.advanceCutoff, { cutoff });
 }
 
 type CrEnrichNode = {
@@ -449,6 +518,18 @@ export const refresh = internalAction({
         fetchRepo(token),
       ]);
       const cache = new Map(cachedList.map((c) => [c.number, c]));
+      let historySyncFailed = false;
+      let historyThrottled = false;
+      try {
+        await syncRecentHistory(ctx, token);
+      } catch (error) {
+        historySyncFailed = true;
+        console.warn("GitHub history refresh failed", String(error));
+        if (error instanceof GitHubRateLimitError) {
+          historyThrottled = true;
+          await ctx.runMutation(internal.prs.delayGitHub, { retryAt: error.retryAt });
+        }
+      }
 
       // Only enrich PRs that are new, changed commit/rollup/threads, pending, or unhydrated.
       const needCr = prs
@@ -467,7 +548,7 @@ export const refresh = internalAction({
         .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
 
       const freshCr =
-        needCr.length > 0
+        needCr.length > 0 && !historyThrottled
           ? await fetchCrEnrichment(
               token,
               needCr.slice(0, CR_REFRESH_CAP).map((pr) => ({ number: pr.number, threadCount: pr.reviewThreads.totalCount })),
@@ -567,7 +648,7 @@ export const refresh = internalAction({
       });
 
       const changed = new Set(
-        await ctx.runMutation(internal.prs.save, { rows, contributors: parseContributors(files) }),
+        await ctx.runMutation(internal.prs.save, { rows, contributors: parseContributors(files), historySyncFailed }),
       );
       const bodies = prs.filter((pr) => changed.has(pr.number)).map((pr) => ({ number: pr.number, body: pr.body }));
       for (let i = 0; i < bodies.length; i += BODY_BATCH) {
@@ -576,7 +657,7 @@ export const refresh = internalAction({
 
       // Run optional enrichment without stacking large batches of GitHub requests.
       const mergeStarted = await ctx.runMutation(internal.prs.startMergeRefresh, {});
-      if (!mergeStarted && remainingUnenriched > 0) {
+      if (!mergeStarted && !historyThrottled && remainingUnenriched > 0) {
         await ctx.scheduler.runAfter(CR_BACKFILL_DELAY_MS, internal.github.backfillCr, {});
       }
     } catch (error) {
