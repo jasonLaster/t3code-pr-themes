@@ -1,6 +1,19 @@
-import { CheckIcon, ClockIcon, MessageSquareWarningIcon, MinusIcon, XIcon } from "lucide-react";
+import {
+  ArrowDownIcon,
+  CheckIcon,
+  ClockIcon,
+  GitMergeIcon,
+  GitPullRequestClosedIcon,
+  GitPullRequestDraftIcon,
+  GitPullRequestIcon,
+  LockIcon,
+  MessageSquareWarningIcon,
+  MinusIcon,
+  TriangleAlertIcon,
+  XIcon,
+} from "lucide-react";
 import { cn } from "@/lib/utils";
-import { ciOf, crOf, type CiStatus, type CrStatus, type Health } from "@/model";
+import { MERGE_LABEL, MERGE_SHORT, REVIEW_LABEL, ciOf, crOf, mergeOf, stateOf, type CiStatus, type CrStatus, type Health, type MergeStatus } from "@/model";
 import type { Pr } from "@/sync";
 
 /** Minimalist rabbit-ear icon for CodeRabbit status indicators. */
@@ -208,6 +221,65 @@ export function CrBadge({ pr, className }: { pr: Pr; className?: string }) {
     <span className={cn(pillBase, "text-muted-foreground/40", className)} title={title}>
       <RabbitIcon className="opacity-60" />
       <span>–</span>
+    </span>
+  );
+}
+
+/** GitHub-style PR state glyph: open, draft, merged, or closed without merging. */
+export function PrStateIcon({ pr, className }: { pr: Pr; className?: string }) {
+  const state = stateOf(pr);
+  const base = cn("size-3.5 shrink-0", className);
+  if (state === "merged") return <GitMergeIcon className={cn(base, "text-(--status-merged)")} aria-label="Merged" />;
+  if (state === "closed") return <GitPullRequestClosedIcon className={cn(base, "text-(--status-fail)")} aria-label="Closed" />;
+  if (pr.draft) return <GitPullRequestDraftIcon className={cn(base, "text-muted-foreground")} aria-label="Draft" />;
+  return <GitPullRequestIcon className={cn(base, "text-(--status-pass)")} aria-label="Open" />;
+}
+
+const MERGE_STYLE: Record<MergeStatus, string> = {
+  ready: "bg-(--status-pass-bg) text-(--status-pass)",
+  blocked: "bg-muted/70 text-muted-foreground",
+  behind: "bg-(--status-warn-bg) text-(--status-warn)",
+  unstable: "bg-(--status-warn-bg) text-(--status-warn)",
+  conflicts: "bg-(--status-fail-bg) text-(--status-fail)",
+  unknown: "text-muted-foreground/45",
+};
+
+export function MergeStatusIcon({ status, className }: { status: MergeStatus; className?: string }) {
+  const cls = (color: string) => cn("size-3 shrink-0", color, className);
+  if (status === "ready") return <GitMergeIcon className={cls("text-(--status-pass)")} strokeWidth={2.2} aria-hidden="true" />;
+  if (status === "conflicts") return <TriangleAlertIcon className={cls("text-(--status-fail)")} strokeWidth={2.2} aria-hidden="true" />;
+  if (status === "behind") return <ArrowDownIcon className={cls("text-(--status-warn)")} strokeWidth={2.2} aria-hidden="true" />;
+  if (status === "unstable") return <TriangleAlertIcon className={cls("text-(--status-warn)")} strokeWidth={2.2} aria-hidden="true" />;
+  if (status === "blocked") return <LockIcon className={cls("text-muted-foreground")} strokeWidth={2.2} aria-hidden="true" />;
+  return <MinusIcon className={cls("text-muted-foreground/50")} aria-hidden="true" />;
+}
+
+export function mergeTooltip(pr: Pr) {
+  if (pr.merge === undefined) return "Merge status syncing…";
+  const review = pr.review ? ` · ${REVIEW_LABEL[pr.review]}` : "";
+  return `${MERGE_LABEL[mergeOf(pr)]}${review}`;
+}
+
+/** Open PRs: GitHub's mergeability. Merged/closed PRs: their final state. */
+export function MergeBadge({ pr, className }: { pr: Pr; className?: string }) {
+  const state = stateOf(pr);
+  if (state !== "open") {
+    const merged = state === "merged";
+    return (
+      <span
+        className={cn(pillBase, merged ? "bg-(--status-merged-bg) text-(--status-merged)" : "bg-(--status-fail-bg) text-(--status-fail)", className)}
+        title={merged ? "Merged" : "Closed without merging"}
+      >
+        {merged ? <GitMergeIcon className="size-3 shrink-0" strokeWidth={2.2} aria-hidden="true" /> : <GitPullRequestClosedIcon className="size-3 shrink-0" strokeWidth={2.2} aria-hidden="true" />}
+        <span>{merged ? "Merged" : "Closed"}</span>
+      </span>
+    );
+  }
+  const status = mergeOf(pr);
+  return (
+    <span className={cn(pillBase, MERGE_STYLE[status], className)} title={mergeTooltip(pr)}>
+      <MergeStatusIcon status={status} className="text-current" />
+      <span>{MERGE_SHORT[status]}</span>
     </span>
   );
 }

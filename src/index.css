@@ -83,6 +83,8 @@
   --status-warn-bg: rgb(237 161 0 / 0.13);
   --status-pending: #5e6ad2;
   --status-pending-bg: rgb(94 106 210 / 0.11);
+  --status-merged: #8250df;
+  --status-merged-bg: rgb(130 80 223 / 0.11);
 }
 
 .dark {
@@ -126,6 +128,8 @@
   --status-warn-bg: rgb(229 160 13 / 0.15);
   --status-pending: #828fff;
   --status-pending-bg: rgb(113 112 255 / 0.15);
+  --status-merged: #a371f7;
+  --status-merged-bg: rgb(163 113 247 / 0.15);
 }
 
 @layer base {

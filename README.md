@@ -15,9 +15,15 @@ npx convex env set GITHUB_TOKEN <fine-grained token, public repos read-only>
 npm run dev
 ```
 
+## State tabs and merge status
+
+Tabs above the filter bar switch between **Open**, **Drafts**, **Merged**, **Closed** and **All**. They swap only the state and draft filters, so other filters stay. Each count shows what the tab would display. History that hasn't loaded yet shows the snapshot total.
+
+Each open PR shows GitHub's merge status: Ready, Blocked, Behind, Unstable (checks failing) or Conflicts, plus the review decision in the tooltip. The refresh stores it from `mergeable`/`mergeStateStatus`. Filter with `merge:conflicts`, or group by **Merge status** or **State**. Merged and closed rows show their final state and when it happened.
+
 ## Historical PRs
 
-Select **State → Merged** or **State → Closed** in the Filter menu to browse historical PRs. Closed means closed without a merge. Add a **Label** chip to narrow the history. For example, enter `state:merged label:codex` in search. A positive `label:` filter by itself searches both historical states. History charts and facet counts cover the imported snapshot.
+Select the **Merged** or **Closed** tab (or **State** in the Filter menu) to browse historical PRs. Closed means closed without a merge. Add a **Label** chip to narrow the history. For example, enter `state:merged label:codex` in search. A positive `label:` filter by itself searches both historical states. History charts and facet counts cover the imported snapshot.
 
 Convex stores history in `prHistory`. The client requests the selected states in pages only when a filter calls for history. It uses the resulting metadata for filters and theme counts, and shows the list in groups of 200 rows. The IndexedDB replica and the `prs.since` cursor serve the open view.
 

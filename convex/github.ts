@@ -38,6 +38,9 @@ type GithubPr = {
   additions: number;
   deletions: number;
   headRefOid: string;
+  mergeable: string;
+  mergeStateStatus: string;
+  reviewDecision: string | null;
   author: { login: string } | null;
   reviewThreads: { totalCount: number };
   commits: {
@@ -71,6 +74,7 @@ const QUERY = `query($owner:String!,$name:String!,$after:String,$first:Boolean!,
       pageInfo{hasNextPage endCursor}
       nodes{
         number title body isDraft createdAt updatedAt additions deletions headRefOid
+        mergeable mergeStateStatus reviewDecision
         author{login}
         reviewThreads{totalCount}
         commits(last:1){
@@ -124,6 +128,24 @@ const DETAILS_QUERY = `query($owner:String!,$name:String!,$number:Int!){
     }
   }
 }`;
+
+type MergeStatus = "ready" | "blocked" | "behind" | "conflicts" | "unstable" | "unknown";
+
+/** GitHub's mergeability, folded into one status. Conflicts win; drafts report BLOCKED. */
+function mergeOf(mergeable: string, state: string): MergeStatus {
+  if (mergeable === "CONFLICTING" || state === "DIRTY") return "conflicts";
+  if (state === "CLEAN" || state === "HAS_HOOKS") return "ready";
+  if (state === "BEHIND") return "behind";
+  if (state === "BLOCKED" || state === "DRAFT") return "blocked";
+  if (state === "UNSTABLE") return "unstable";
+  return "unknown";
+}
+
+const REVIEW: Record<string, "approved" | "changes" | "required"> = {
+  APPROVED: "approved",
+  CHANGES_REQUESTED: "changes",
+  REVIEW_REQUIRED: "required",
+};
 
 const CHECK_RUN_FAIL = new Set(["FAILURE", "TIMED_OUT", "ACTION_REQUIRED", "STARTUP_FAILURE"]);
 const CHECK_RUN_PENDING = new Set(["IN_PROGRESS", "QUEUED", "PENDING", "WAITING", "REQUESTED"]);
@@ -516,6 +538,8 @@ export const refresh = internalAction({
           ciFailed,
           ciPending,
           ciPassed,
+          merge: mergeOf(pr.mergeable, pr.mergeStateStatus),
+          review: pr.reviewDecision ? REVIEW[pr.reviewDecision] : undefined,
         };
       });
 

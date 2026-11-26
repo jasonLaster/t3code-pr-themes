@@ -37,6 +37,27 @@ export const CR_LABEL: Record<CrStatus, string> = {
   none: "No review",
 };
 
+export type MergeStatus = "ready" | "blocked" | "behind" | "conflicts" | "unstable" | "unknown";
+export const MERGE_STATUSES: MergeStatus[] = ["ready", "blocked", "behind", "unstable", "conflicts", "unknown"];
+export const MERGE_LABEL: Record<MergeStatus, string> = {
+  ready: "Ready to merge",
+  blocked: "Blocked",
+  behind: "Behind base",
+  unstable: "Checks failing",
+  conflicts: "Conflicts",
+  unknown: "Checking",
+};
+export const MERGE_SHORT: Record<MergeStatus, string> = {
+  ready: "Ready",
+  blocked: "Blocked",
+  behind: "Behind",
+  unstable: "Unstable",
+  conflicts: "Conflicts",
+  unknown: "…",
+};
+export const mergeOf = (pr: Pr): MergeStatus => pr.merge ?? "unknown";
+export const REVIEW_LABEL = { approved: "Approved", changes: "Changes requested", required: "Review required" } as const;
+
 export type Health = "green" | "needs-work" | "running" | "none";
 export const HEALTH_ORDER: Health[] = ["green", "needs-work", "running", "none"];
 export const HEALTH_LABEL: Record<Health, string> = {
@@ -90,7 +111,7 @@ export const RANGES = [
   { value: "90d", label: "Last 3 months" },
 ];
 
-export const FILTER_KEYS = ["author", "theme", "tier", "type", "opened", "ci", "cr", "is", "state", "label"] as const;
+export const FILTER_KEYS = ["author", "theme", "tier", "type", "opened", "ci", "cr", "merge", "is", "state", "label"] as const;
 export type FilterKey = (typeof FILTER_KEYS)[number];
 const KEY_ALIASES: Record<string, FilterKey> = {
   by: "author",
@@ -100,6 +121,7 @@ const KEY_ALIASES: Record<string, FilterKey> = {
   checks: "ci",
   coderabbit: "cr",
   rabbit: "cr",
+  mergeable: "merge",
 };
 /** Keys that hold a single value; setting one replaces the previous value. */
 const SINGLE: FilterKey[] = ["opened"];
@@ -182,6 +204,14 @@ const CR_VALUE_ALIASES: Record<string, CrStatus> = {
   reviewing: "pending",
 };
 
+const MERGE_VALUE_ALIASES: Record<string, MergeStatus> = {
+  clean: "ready",
+  mergeable: "ready",
+  conflict: "conflicts",
+  conflicting: "conflicts",
+  dirty: "conflicts",
+};
+
 export const OPENED_RANGE_RE = /^(\d{4}-\d{2}-\d{2})\.\.(\d{4}-\d{2}-\d{2})$/;
 
 export function formatOpenedRange(value: string) {
@@ -233,6 +263,10 @@ function test(pr: Pr, key: FilterKey, value: string, contributors: Contributors,
       const target = CR_VALUE_ALIASES[value] ?? value;
       return pr.open && crOf(pr) === target;
     }
+    case "merge": {
+      const target = MERGE_VALUE_ALIASES[value] ?? value;
+      return pr.open && mergeOf(pr) === target;
+    }
     case "is":
       if (value === "draft") return pr.draft;
       if (value === "ready") return !pr.draft;
@@ -258,11 +292,13 @@ export function makeMatcher(q: string, contributors: Contributors, now: number) 
   };
 }
 
-export type GroupBy = "theme" | "health" | "ci" | "cr" | "who" | "author" | "none";
+export type GroupBy = "theme" | "state" | "health" | "merge" | "ci" | "cr" | "who" | "author" | "none";
 export type SortBy = "created" | "updated" | "health" | "needs-work" | "size";
 export const GROUP_LABEL: Record<GroupBy, string> = {
   theme: "Theme",
+  state: "State",
   health: "Check health",
+  merge: "Merge status",
   ci: "CI status",
   cr: "CodeRabbit",
   who: "Contributor tier",
