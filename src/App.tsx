@@ -208,8 +208,12 @@ export function App() {
   const displayRef = useRef<HTMLDivElement>(null);
   const deferredQ = useDeferredValue(q);
   const states = useMemo(() => requestedStates(deferredQ), [deferredQ]);
-  const showMerged = states.includes("merged");
-  const showClosed = states.includes("closed");
+  // The frontend and Convex can roll out independently.
+  const historyRequested = states.includes("merged") || states.includes("closed");
+  const historyAvailable = status?.historyAvailable === true;
+  const historyUnavailable = historyRequested && status !== undefined && !historyAvailable;
+  const showMerged = historyAvailable && states.includes("merged");
+  const showClosed = historyAvailable && states.includes("closed");
   const showHistory = showMerged || showClosed;
   const showOpen = states.includes("open");
   const merged = useHistory("merged", showMerged);
@@ -382,7 +386,7 @@ export function App() {
     }
     const drafts = all.filter((pr) => pr.draft).length;
     const tierWho: Record<Tier, Who> = { maintainer: "maintainer", vouched: "vouched", community: "community", denounced: "community" };
-    return [
+    const options: Facet[] = [
       {
         key: "state",
         label: "State",
@@ -451,7 +455,8 @@ export function App() {
         ],
       },
     ];
-  }, [all, contributors, asOf, states, rows, historyLoading]);
+    return historyAvailable ? options : options.filter(({ key }) => key !== "state" && key !== "label");
+  }, [all, contributors, asOf, states, rows, historyLoading, historyAvailable]);
 
   const { tokens } = parseQuery(q);
   const people = tokens.filter((t) => t.key === "author" || t.key === "tier");
@@ -486,8 +491,9 @@ export function App() {
     return m;
   }, [all]);
 
-  const loading = historyLoading || rows === null || (showOpen && rows.size === 0 && !status?.fetchedAt);
-  const title = showHistory ? "Pull request history" : activeView?.label ?? "Filtered";
+  const loading = historyLoading || (historyRequested && status === undefined) ||
+    rows === null || (showOpen && rows.size === 0 && !status?.fetchedAt);
+  const title = historyRequested ? "Pull request history" : activeView?.label ?? "Filtered";
 
   return (
     <div className="flex h-dvh overflow-hidden bg-sidebar text-foreground">
@@ -612,6 +618,11 @@ export function App() {
 
         <div className="flex min-h-0 flex-1">
           <main ref={listRef} className="@container min-w-0 flex-1 overflow-y-auto" aria-label="Pull requests">
+            {historyUnavailable && (
+              <p className="border-b border-border px-6 py-2 text-xs text-muted-foreground" role="status">
+                Pull request history is unavailable on this deployment.
+              </p>
+            )}
             {showHistory && !loading && historyIncomplete && (
               <p className="border-b border-border px-6 py-2 text-xs text-muted-foreground">
                 History backfill in progress
@@ -660,10 +671,10 @@ export function App() {
             )}
 
             {loading ? (
-              <p className="p-6 text-[13px] text-muted-foreground">{showHistory ? "Loading pull request history…" : "Loading pull requests…"}</p>
+              <p className="p-6 text-[13px] text-muted-foreground">{historyRequested ? "Loading pull request history…" : "Loading pull requests…"}</p>
             ) : filtered.length === 0 ? (
               <div className="grid place-items-center gap-3 p-16 text-center text-[13px] text-muted-foreground">
-                No pull requests match these filters.
+                {!historyUnavailable && "No pull requests match these filters."}
                 <Button size="sm" onClick={clearAll}>Clear filters</Button>
               </div>
             ) : (
@@ -835,8 +846,9 @@ export function App() {
           </div>
           <p className="mt-4 mb-1 font-[510]">Typing filters</p>
           <p className="text-muted-foreground">
-            In search, type <code>author:theo</code>, <code>tier:vouched</code>, <code>theme:mobile</code>, <code>type:feat</code>, <code>opened:7d</code> or{" "}
-            <code>is:draft</code>, <code>state:merged</code> or <code>label:codex</code>, then a space. Prefix with <code>-</code> to exclude. Tiers come from <code>.github/VOUCHED.td</code> and{" "}
+            In search, type a filter like <code>author:theo</code>, <code>tier:vouched</code>, <code>theme:mobile</code>, <code>type:feat</code>, <code>opened:7d</code> or{" "}
+            <code>is:draft</code>, then a space. {historyAvailable && <>Use <code>state:merged</code> and <code>label:codex</code> for history. </>}
+            Prefix with <code>-</code> to exclude. Tiers come from <code>.github/VOUCHED.td</code> and{" "}
             <code>.github/TRIAGE_EXEMPTIONS.td</code>.
           </p>
         </DialogContent>
