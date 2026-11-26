@@ -592,6 +592,12 @@ export const refresh = internalAction({
 export const refreshMerge = internalAction({
   args: { startedAt: v.number(), after: v.optional(v.string()), attempt: v.optional(v.number()) },
   handler: async (ctx, { startedAt, after, attempt = 0 }) => {
+    const wait = await ctx.runQuery(internal.prs.mergePageDelay, { startedAt });
+    if (wait === null) return;
+    if (wait > 0) {
+      await ctx.scheduler.runAfter(wait, internal.github.refreshMerge, { startedAt, after, attempt });
+      return;
+    }
     try {
       const token = process.env.GITHUB_TOKEN;
       if (!token) throw new Error("GITHUB_TOKEN is not set on this Convex deployment");
@@ -612,6 +618,7 @@ export const refreshMerge = internalAction({
       const now = Date.now();
       const delay = retryAt ? Math.max(retryAt - now, 120_000 * 2 ** attempt) : 10_000 * 2 ** attempt;
       if (attempt < 3 && now + delay - startedAt < 15 * 60_000) {
+        if (retryAt) await ctx.runMutation(internal.prs.delayGitHub, { retryAt: now + delay });
         await ctx.scheduler.runAfter(delay, internal.github.refreshMerge, { startedAt, after, attempt: attempt + 1 });
         return;
       }

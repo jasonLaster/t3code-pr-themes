@@ -186,7 +186,6 @@ async function startRefresh(ctx: MutationCtx, force: boolean) {
   const now = Date.now();
   const s = await getStatus(ctx);
   if ((s.githubRetryAt ?? 0) > now) return false;
-  if (s.mergeRefreshStartedAt && now - s.mergeRefreshStartedAt < MERGE_TIMEOUT_MS) return false;
   if (s.refreshStartedAt && now - s.refreshStartedAt < REFRESH_TIMEOUT_MS) return false;
   if (!force && s.fetchedAt && now - s.fetchedAt < STALE_MS) return false;
   await ctx.db.patch(s._id, { refreshStartedAt: now });
@@ -216,6 +215,25 @@ export const startMergeRefresh = internalMutation({
     await ctx.db.patch(status._id, { mergeRefreshStartedAt: now });
     await ctx.scheduler.runAfter(0, internal.github.refreshMerge, { startedAt: now });
     return true;
+  },
+});
+
+export const mergePageDelay = internalQuery({
+  args: { startedAt: v.number() },
+  handler: async (ctx, { startedAt }) => {
+    const status = await ctx.db.query("status").first();
+    const now = Date.now();
+    if (status?.mergeRefreshStartedAt !== startedAt || now - startedAt >= MERGE_TIMEOUT_MS) return null;
+    const refreshDelay = status.refreshStartedAt && now - status.refreshStartedAt < REFRESH_TIMEOUT_MS ? 10_000 : 0;
+    return Math.max(refreshDelay, (status.githubRetryAt ?? 0) - now);
+  },
+});
+
+export const delayGitHub = internalMutation({
+  args: { retryAt: v.number() },
+  handler: async (ctx, { retryAt }) => {
+    const status = await getStatus(ctx);
+    if (retryAt > (status.githubRetryAt ?? 0)) await ctx.db.patch(status._id, { githubRetryAt: retryAt });
   },
 });
 
@@ -249,7 +267,7 @@ export const failMergeRefresh = internalMutation({
   handler: async (ctx, { startedAt, retryAt }) => {
     const status = await getStatus(ctx);
     if (status.mergeRefreshStartedAt !== startedAt) return;
-    await ctx.db.patch(status._id, { mergeRefreshStartedAt: undefined, githubRetryAt: retryAt });
+    await ctx.db.patch(status._id, { mergeRefreshStartedAt: undefined, githubRetryAt: Math.max(status.githubRetryAt ?? 0, retryAt ?? 0) });
   },
 });
 
@@ -468,6 +486,6 @@ export const fail = internalMutation({
   args: { error: v.string(), retryAt: v.optional(v.number()) },
   handler: async (ctx, { error, retryAt }) => {
     const s = await getStatus(ctx);
-    await ctx.db.patch(s._id, { refreshStartedAt: undefined, lastError: error, githubRetryAt: retryAt });
+    await ctx.db.patch(s._id, { refreshStartedAt: undefined, lastError: error, githubRetryAt: Math.max(s.githubRetryAt ?? 0, retryAt ?? 0) });
   },
 });
