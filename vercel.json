@@ -1,4 +1,10 @@
 {
   "$schema": "https://openapi.vercel.sh/vercel.json",
-  "framework": "vite"
+  "framework": "vite",
+  "rewrites": [
+    {
+      "source": "/marketing/agent-setup-and-workspace",
+      "destination": "/marketing/agent-setup-and-workspace/index.html"
+    }
+  ]
 }

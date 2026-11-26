@@ -1,0 +1,575 @@
+<!doctype html><html><head><meta charset="utf-8"><meta name=viewport content="width=device-width,initial-scale=1,viewport-fit=cover"><style>:root{color-scheme:light;box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}html{scroll-padding-top:env(safe-area-inset-top,0px)}body{margin:0;padding:0;font:14px -apple-system,BlinkMacSystemFont,sans-serif;background:#fff;color:#000}img{max-width:100%}[hidden]:not([hidden=until-found i]){display:none!important}</style><title>Agent Setup &amp; One Workspace</title></head><body>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Instrument+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<style>
+/* Layout: sticky band with the two parts and a live GitHub CTA; one reading column below, split into Part 1 and Part 2. */
+:root {
+  --bg: #f6f7f9;
+  --surface: #ffffff;
+  --ink: #14171f;
+  --muted: #5b6272;
+  --line: #dde1e8;
+  --accent: #3a4fd8;
+  --accent-soft: #e7eafc;
+  --on-accent: #ffffff;
+  --write: #2f8a5b;
+  --user: #b5651d;
+  --read: #6a7286;
+  --hidden: #b9bfcc;
+  --code-bg: #eef0f4;
+  --header: rgba(246, 247, 249, 0.92);
+  --sans: "Instrument Sans", "Inter", system-ui, -apple-system, sans-serif;
+  --mono: "IBM Plex Mono", ui-monospace, "SF Mono", Menlo, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #0f1116; --surface: #171a22; --ink: #e8eaf0; --muted: #9aa1b2; --line: #2a2f3b;
+    --accent: #8d9bff; --accent-soft: #1f2440; --on-accent: #0f1116; --write: #5cc48d; --user: #e39a55; --read: #9aa1b2;
+    --hidden: #4a5061; --code-bg: #1e222c; --header: rgba(15, 17, 22, 0.92); color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #0f1116; --surface: #171a22; --ink: #e8eaf0; --muted: #9aa1b2; --line: #2a2f3b;
+  --accent: #8d9bff; --accent-soft: #1f2440; --on-accent: #0f1116; --write: #5cc48d; --user: #e39a55; --read: #9aa1b2;
+  --hidden: #4a5061; --code-bg: #1e222c; --header: rgba(15, 17, 22, 0.92); color-scheme: dark;
+}
+* { box-sizing: border-box; }
+html { scroll-padding-top: calc(env(safe-area-inset-top, 0px) + 76px); }
+@media (prefers-reduced-motion: no-preference) { html { scroll-behavior: smooth; } }
+body { background: var(--bg); color: var(--ink); font-family: var(--sans); font-size: 16px; line-height: 1.6; padding-block: 0 64px; }
+body::before { content: ""; position: fixed; inset: 0 0 auto; height: env(safe-area-inset-top, 0px); z-index: 10; background: var(--bg); }
+.gutter { padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px)); }
+.wrap { max-width: 980px; margin: 0 auto; }
+h1, h2, h3 { text-wrap: balance; line-height: 1.15; margin: 0; letter-spacing: -0.01em; }
+h1 { font-size: clamp(2rem, 5vw, 3rem); font-weight: 700; }
+h2 { font-size: clamp(1.6rem, 3.6vw, 2.3rem); font-weight: 680; }
+h3 { font-size: 1.1rem; font-weight: 600; }
+p { margin: 0; }
+a { color: var(--accent); text-underline-offset: 3px; }
+a:focus-visible, button:focus-visible, summary:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 6px; }
+code { font-family: var(--mono); font-size: 0.86em; background: var(--code-bg); padding: 1px 5px; border-radius: 4px; }
+.prose { max-width: 660px; display: flex; flex-direction: column; gap: 14px; font-size: 1.05rem; }
+.muted { color: var(--muted); }
+.stack { display: flex; flex-direction: column; gap: 18px; }
+
+/* Sticky header */
+.topbar { position: sticky; top: env(safe-area-inset-top, 0px); z-index: 5; background: var(--header); backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px); border-bottom: 1px solid var(--line); }
+.topbar .wrap { display: flex; align-items: center; gap: 10px; min-height: 60px; padding-block: 10px; }
+.tabs { display: flex; gap: 4px; flex: 1; min-width: 0; }
+.tab { display: flex; align-items: center; gap: 8px; padding: 6px 12px; border-radius: 8px; color: var(--muted); text-decoration: none; font-weight: 600; font-size: 0.92rem; white-space: nowrap; min-width: 0; }
+.tab .n { font-family: var(--mono); font-size: 0.75rem; width: 22px; height: 22px; border-radius: 50%; border: 1px solid currentColor; display: inline-flex; align-items: center; justify-content: center; flex: none; }
+.tab .short { display: none; }
+.tab:hover { color: var(--ink); }
+.tab[aria-current="true"] { background: var(--accent-soft); color: var(--accent); }
+.tab[aria-current="true"] .n { background: var(--accent); color: var(--on-accent); border-color: var(--accent); }
+.cta { display: inline-flex; align-items: center; gap: 6px; padding: 7px 12px; border-radius: 8px; background: var(--ink); color: var(--bg); font-weight: 600; font-size: 0.86rem; text-decoration: none; white-space: nowrap; }
+.cta .pn { font-family: var(--mono); font-weight: 500; }
+.menu { position: relative; }
+.menu > summary { list-style: none; cursor: pointer; padding: 7px 12px; border-radius: 8px; border: 1px solid var(--line); font-weight: 600; font-size: 0.86rem; white-space: nowrap; background: var(--surface); }
+.menu > summary::-webkit-details-marker { display: none; }
+.menu > summary::after { content: " ▾"; color: var(--muted); }
+.menu .list { position: absolute; right: 0; top: calc(100% + 6px); width: min(360px, calc(100vw - 32px)); background: var(--surface); border: 1px solid var(--line); border-radius: 10px; padding: 6px; box-shadow: 0 10px 30px rgba(0,0,0,0.12); display: flex; flex-direction: column; }
+.menu .grp { font-family: var(--mono); font-size: 0.7rem; letter-spacing: 0.06em; text-transform: uppercase; color: var(--muted); padding: 8px 10px 4px; }
+.menu .list a { display: grid; grid-template-columns: 64px minmax(0, 1fr); gap: 8px; padding: 7px 10px; border-radius: 6px; color: var(--ink); text-decoration: none; font-size: 0.88rem; }
+.menu .list a:hover { background: var(--accent-soft); }
+.menu .list a span:first-child { font-family: var(--mono); color: var(--accent); }
+
+/* Hero */
+.hero { padding-block: 56px 8px; display: flex; flex-direction: column; gap: 22px; }
+.two { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; }
+.two a { display: flex; flex-direction: column; gap: 8px; padding: 18px 20px; border: 1px solid var(--line); border-radius: 12px; background: var(--surface); color: var(--ink); text-decoration: none; min-width: 0; }
+.two a:hover { border-color: var(--accent); }
+.two .n { font-family: var(--mono); font-size: 0.75rem; color: var(--accent); }
+.two b { font-size: 1.15rem; }
+.two span:last-child { color: var(--muted); font-size: 0.95rem; }
+.tested { font-size: 0.92rem; color: var(--muted); max-width: 660px; }
+
+/* Parts */
+.part { padding-top: 72px; display: flex; flex-direction: column; gap: 40px; }
+.part-head { display: flex; flex-direction: column; gap: 10px; }
+.part-label { font-family: var(--mono); font-size: 0.78rem; color: var(--accent); letter-spacing: 0.06em; text-transform: uppercase; }
+
+/* Transcript */
+.transcript { background: var(--surface); border: 1px solid var(--line); border-radius: 12px; overflow: hidden; max-width: 760px; }
+.transcript .bar { display: flex; align-items: center; gap: 8px; padding: 10px 16px; border-bottom: 1px solid var(--line); font-family: var(--mono); font-size: 0.75rem; color: var(--muted); }
+.transcript .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--write); }
+.turns { padding: 18px; display: flex; flex-direction: column; gap: 14px; }
+.msg { max-width: 540px; padding: 10px 14px; border-radius: 10px; font-size: 0.95rem; }
+.msg.you { align-self: flex-end; background: var(--accent); color: var(--on-accent); }
+.msg.agent { background: var(--code-bg); }
+.tool { font-family: var(--mono); font-size: 0.78rem; color: var(--muted); display: flex; gap: 10px; align-items: baseline; padding-left: 4px; flex-wrap: wrap; }
+.tool .name { color: var(--ink); }
+.tag { font-family: var(--mono); font-size: 0.7rem; padding: 1px 7px; border-radius: 99px; border: 1px solid currentColor; white-space: nowrap; }
+.tag.write { color: var(--write); } .tag.user { color: var(--user); }
+.card { border: 1px dashed var(--user); border-radius: 10px; padding: 12px 14px; max-width: 540px; display: flex; flex-direction: column; gap: 8px; font-size: 0.92rem; }
+.card .row { display: flex; gap: 8px; flex-wrap: wrap; }
+.btn { font-family: var(--sans); font-size: 0.82rem; padding: 4px 12px; border-radius: 6px; border: 1px solid var(--line); background: var(--surface); color: var(--ink); }
+.btn.primary { background: var(--ink); color: var(--surface); border-color: var(--ink); }
+
+/* Settings split */
+.split { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 40px; align-items: start; }
+.bar100 { display: flex; height: 36px; border-radius: 8px; overflow: hidden; gap: 2px; }
+.bar100 > div { display: flex; align-items: center; justify-content: center; font-family: var(--mono); font-size: 0.8rem; color: var(--surface); font-weight: 500; }
+.legend { display: grid; grid-template-columns: auto 1fr; gap: 10px 14px; margin-top: 16px; font-size: 0.93rem; }
+.legend .n { font-family: var(--mono); font-variant-numeric: tabular-nums; font-weight: 500; display: flex; align-items: center; gap: 8px; }
+.legend .sw { width: 10px; height: 10px; border-radius: 2px; display: inline-block; }
+.legend span { color: var(--muted); }
+.legend strong { color: var(--ink); font-weight: 600; }
+
+/* Four kinds */
+.kinds { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 14px; }
+.kind { border-top: 3px solid var(--line); padding-top: 12px; display: flex; flex-direction: column; gap: 8px; min-width: 0; }
+.kind.k1 { border-color: var(--write); } .kind.k2 { border-color: var(--accent); } .kind.k3 { border-color: var(--user); } .kind.k4 { border-color: var(--read); }
+.kind ul { margin: 0; padding-left: 18px; color: var(--muted); font-size: 0.88rem; display: flex; flex-direction: column; gap: 2px; }
+
+/* Machine map */
+.map { background: var(--surface); border: 1px solid var(--line); border-radius: 12px; padding: 12px; overflow-x: auto; }
+.map svg { display: block; width: 100%; min-width: 640px; height: auto; }
+.map text { font-family: var(--sans); fill: var(--ink); }
+.map .lbl { font-family: var(--mono); font-size: 11px; fill: var(--muted); }
+
+/* PR cards */
+.prs { display: flex; flex-direction: column; gap: 14px; }
+.pr { background: var(--surface); border: 1px solid var(--line); border-radius: 12px; padding: 20px; display: flex; flex-direction: column; gap: 14px; }
+.pr .head { display: flex; gap: 16px; align-items: flex-start; justify-content: space-between; flex-wrap: wrap; }
+.pr .body { display: flex; flex-direction: column; gap: 6px; min-width: 0; flex: 1 1 420px; }
+.pr .num { font-family: var(--mono); font-size: 0.8rem; color: var(--muted); display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.pr .body p { color: var(--muted); font-size: 0.95rem; max-width: 640px; }
+.gh { display: inline-flex; align-items: center; gap: 6px; padding: 6px 12px; border-radius: 8px; border: 1px solid var(--line); color: var(--ink); text-decoration: none; font-weight: 600; font-size: 0.85rem; white-space: nowrap; }
+.gh:hover { border-color: var(--accent); color: var(--accent); }
+.pill { font-family: var(--mono); font-size: 0.7rem; padding: 1px 8px; border-radius: 99px; }
+.pill.open { background: var(--accent-soft); color: var(--accent); }
+.pill.closed { background: var(--code-bg); color: var(--muted); }
+
+.media { display: flex; flex-wrap: wrap; gap: 14px; align-items: flex-start; }
+.media figure { margin: 0; display: flex; flex-direction: column; gap: 6px; min-width: 0; }
+.media .wide { flex: 1 1 360px; max-width: 600px; }
+.media .phone { flex: 0 1 220px; }
+.media .full { flex: 1 1 100%; max-width: 640px; }
+.media .shot { flex: 0 1 200px; }
+.media video, .media img { width: 100%; border-radius: 8px; border: 1px solid var(--line); background: var(--code-bg); display: block; }
+.media .phone video { max-height: 440px; object-fit: contain; }
+.media figcaption { font-size: 0.8rem; color: var(--muted); }
+
+.more { border: 1px solid var(--line); border-radius: 8px; }
+.more > summary { cursor: pointer; padding: 9px 14px; font-weight: 600; font-size: 0.88rem; display: flex; flex-wrap: wrap; gap: 4px 12px; align-items: baseline; list-style: none; }
+.more > summary::-webkit-details-marker { display: none; }
+.more > summary::before { content: "+"; font-family: var(--mono); color: var(--accent); width: 12px; }
+.more[open] > summary::before { content: "−"; }
+.more > summary span { font-family: var(--mono); font-weight: 400; font-size: 0.74rem; color: var(--muted); }
+.more-body { padding: 12px 16px 16px; display: flex; flex-direction: column; gap: 10px; font-size: 0.9rem; border-top: 1px solid var(--line); }
+.more-body h4 { margin: 8px 0 0; font-size: 0.76rem; font-family: var(--mono); text-transform: uppercase; letter-spacing: 0.06em; color: var(--muted); font-weight: 500; }
+.more-body ul, .more-body ol { margin: 0; padding-left: 20px; display: flex; flex-direction: column; gap: 4px; }
+.tbl { overflow-x: auto; }
+.tbl table { border-collapse: collapse; width: 100%; min-width: 520px; font-size: 0.86rem; }
+.tbl th, .tbl td { text-align: left; vertical-align: top; padding: 8px 10px; border-bottom: 1px solid var(--line); }
+.tbl th { font-family: var(--mono); font-size: 0.72rem; text-transform: uppercase; letter-spacing: 0.05em; color: var(--muted); font-weight: 500; }
+
+footer { margin-top: 72px; font-family: var(--mono); font-size: 0.75rem; color: var(--muted); border-top: 1px solid var(--line); padding-top: 20px; }
+
+@media (max-width: 820px) {
+  .split, .two { grid-template-columns: 1fr; }
+  .kinds { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+@media (max-width: 640px) {
+  .tab .long { display: none; }
+  .tab .short { display: inline; }
+  .tab { padding: 6px 8px; }
+  .cta .lbl { display: none; }
+}
+@media (max-width: 420px) {
+  .kinds { grid-template-columns: 1fr; }
+  .tab .short { display: none; }
+}
+</style>
+
+<header class="topbar gutter">
+  <div class="wrap">
+    <nav class="tabs" aria-label="Parts">
+      <a class="tab" href="#setup" data-part="setup" aria-current="true"><span class="n">1</span><span class="long">Let your agent set up T3 Code</span><span class="short">Agent setup</span></a>
+      <a class="tab" href="#workspace" data-part="workspace" aria-current="false"><span class="n">2</span><span class="long">One workspace</span><span class="short">Workspace</span></a>
+    </nav>
+    <a class="cta" id="cta" href="https://github.com/pingdotgg/t3code/pull/41091"><span class="lbl">GitHub</span><span class="pn" id="cta-num">#41091</span> ↗</a>
+    <details class="menu" id="menu">
+      <summary>All PRs</summary>
+      <div class="list">
+        <div class="grp">1 · Agent setup</div>
+        <a href="https://github.com/pingdotgg/t3code/pull/41091"><span>#41091</span><span>Headless settings</span></a>
+        <a href="https://github.com/pingdotgg/t3code/pull/42306"><span>#42306</span><span>Project defaults fix (superseded by #42297)</span></a>
+        <div class="grp">2 · One workspace</div>
+        <a href="https://github.com/pingdotgg/t3code/pull/41771"><span>#41771</span><span>Move threads between machines</span></a>
+        <a href="https://github.com/pingdotgg/t3code/pull/41109"><span>#41109</span><span>Add a project to another machine from mobile</span></a>
+        <a href="https://github.com/pingdotgg/t3code/pull/40658"><span>#40658</span><span>Add Environment shows what it's connecting to</span></a>
+        <a href="https://github.com/pingdotgg/t3code/pull/43143"><span>#43143</span><span>Mobile pairing URL fix</span></a>
+      </div>
+    </details>
+  </div>
+</header>
+
+<main class="gutter">
+  <div class="wrap">
+
+    <section class="hero">
+      <h1>Two things I've been working on</h1>
+      <div class="two">
+        <a href="#setup"><span class="n">1</span><b>Let your agent set up T3 Code</b><span>Anything you can configure in T3 Code, you should be able to just ask your agent to do.</span></a>
+        <a href="#workspace"><span class="n">2</span><b>One workspace</b><span>My laptop, my VPS and my phone should feel like one place to work, not three separate apps.</span></a>
+      </div>
+      <p class="tested">I tested all of it pretty hard. For each PR, two models came up with the nastiest cases they could think of, and I ran those in the real app against separate dev servers. Every bug that turned up got a fix and a test. It's all tucked under “How I tested it” on each PR if you want to dig in.</p>
+    </section>
+
+    <!-- PART 1 -->
+    <section class="part" id="setup" data-part="setup">
+      <div class="part-head">
+        <span class="part-label">Part 1</span>
+        <h2>Let your agent set up T3 Code</h2>
+      </div>
+      <div class="prose">
+        <p>T3 Code is open source, so the agent you're already coding with knows how it works. And because the app is built around tools agents can drive, there's no reason your agent can't configure T3 Code exactly the way you like it.</p>
+        <p>The big missing piece was settings. An agent could only change 5 of the 88. So if I asked it to prefix my branches with <code>jl/</code> or stop keeping my Mac awake, it just couldn't. That's what headless settings fixes.</p>
+      </div>
+
+      <div class="transcript" role="img" aria-label="Example thread where an agent changes settings">
+        <div class="bar"><span class="dot"></span>thread · laptop · Full access</div>
+        <div class="turns">
+          <div class="msg you">Prefix my new branches with jl/, and stop keeping my Mac awake while agents work.</div>
+          <div class="tool"><span class="name">t3_settings_read</span> branchPrefix, preventSleep <span class="tag write">write</span><span class="tag write">write</span></div>
+          <div class="tool"><span class="name">t3_settings_update</span> { branchPrefix: "jl/", preventSleep: false } → saved</div>
+          <div class="msg agent">Done. New worktree branches start with <code>jl/</code>, and T3 Code won't keep your Mac awake during turns anymore.</div>
+          <div class="msg you">Also let agents use the browser by default.</div>
+          <div class="tool"><span class="name">t3_settings_read</span> browserAccess <span class="tag user">user</span></div>
+          <div class="card">
+            <div>That one widens what agents can do, so it's your call. You'll find it under Settings → Agents.</div>
+            <div class="row"><span class="btn primary">Open Settings</span><span class="btn">Not now</span></div>
+          </div>
+        </div>
+      </div>
+
+      <div class="split">
+        <div class="prose">
+          <h3>Which settings can an agent touch?</h3>
+          <p>Every setting gets an access level, and the type system enforces it. If someone adds a new setting and doesn't decide whether agents can change it, typecheck fails.</p>
+          <p class="muted">Anything secret, anything that widens what agents can do, and anything that deletes files or runs later stays with you.</p>
+        </div>
+        <div>
+          <div class="bar100" aria-label="Settings by access: 43 write, 31 user, 4 read, 11 hidden">
+            <div style="flex:43;background:var(--write)">43</div>
+            <div style="flex:31;background:var(--user)">31</div>
+            <div style="flex:4;background:var(--read)"></div>
+            <div style="flex:11;background:var(--hidden)">11</div>
+          </div>
+          <div class="legend">
+            <div class="n"><i class="sw" style="background:var(--write)"></i>43</div><span><strong>Agent can change.</strong> Branch prefix, sleep, default models, usage display and more.</span>
+            <div class="n"><i class="sw" style="background:var(--user)"></i>31</div><span><strong>Only you.</strong> Secrets, providers, sharing, permissions, cleanup.</span>
+            <div class="n"><i class="sw" style="background:var(--read)"></i>4</div><span><strong>Read-only.</strong></span>
+            <div class="n"><i class="sw" style="background:var(--hidden)"></i>11</div><span><strong>Hidden.</strong> Legacy fields and agent feedback.</span>
+          </div>
+        </div>
+      </div>
+
+      <div class="stack">
+        <h3>Where I want this to go</h3>
+        <p class="prose">Settings are step one. I went through every action in web, desktop and mobile, and every endpoint behind them. About a quarter to a third already have a tool. The rest sort into four buckets, and the last three can share one request card instead of a new UI for each.</p>
+        <div class="kinds">
+          <div class="kind k1"><h3>Agent just does it</h3><ul><li>Terminals and scripts</li><li>Diffs, commit, pull</li><li>PR dashboard, usage</li><li>Preview and device controls</li><li>Keybindings, project settings</li></ul></div>
+          <div class="kind k2"><h3>Needs your OK</h3><ul><li>Widen permissions</li><li>Delete a thread</li><li>Roll back a checkpoint</li><li>Remove a worktree</li><li>Sharing, server updates</li></ul></div>
+          <div class="kind k3"><h3>Needs your input</h3><ul><li>Pairing codes</li><li>SSH passwords</li><li>Provider and forge sign-ins</li></ul></div>
+          <div class="kind k4"><h3>Only your app</h3><ul><li>Add an SSH or T3 Connect env</li><li>Port forwarding, app updates</li><li>On-device preferences</li></ul></div>
+        </div>
+      </div>
+
+      <div class="prs">
+        <article class="pr" data-pr="41091">
+          <div class="head">
+            <div class="body">
+              <span class="num">#41091 <span class="pill open">open</span></span>
+              <h3>Headless settings: agents can read and change environment settings</h3>
+              <p>Two new tools, <code>t3_settings_read</code> and <code>t3_settings_update</code>, replace the old five-field one. Secrets are redacted, policy-locked settings are flagged, and the tool list actually got smaller.</p>
+            </div>
+            <a class="gh" href="https://github.com/pingdotgg/t3code/pull/41091">View on GitHub ↗</a>
+          </div>
+          <details class="more">
+            <summary>How I tested it <span>14 scenarios · 4 bugs fixed · 2 reviews · evals</span></summary>
+            <div class="more-body">
+              <p>I ran the real server against isolated state and called <code>/mcp</code> directly at every access level, with a second linked server for the cross-environment cases. Gemini 4 Neon and GPT-6.2 Sol each planned scenarios on their own.</p>
+              <h4>Held (6 of 14)</h4>
+              <ul><li>The access-level matrix</li><li>Batches that mix allowed and refused keys stay atomic</li><li>Concurrent writes</li><li>Redaction: planted fake secrets never showed up in a response</li><li>Persistence across restart</li><li>Cross-environment routing and guards</li></ul>
+              <h4>Fixed in the PR, each with a test that fails without it</h4>
+              <ol>
+                <li><b>An agent could corrupt <code>settings.json</code>.</b> The schema offered <code>"Infinity"</code> for intervals, which saved as <code>null</code>, so every later load fell back to defaults. Provider instances vanished and linked environments turned off. On a linked environment it cut the link, so nothing could fix it remotely.</li>
+                <li><b>Some map settings could never be emptied.</b> Sending <code>{}</code> did nothing.</li>
+                <li><b>No size limits.</b> A 5 MB string grew the file to 10.9 MB and broadcast to every client. Patches are now capped.</li>
+                <li><b>An unreadable settings file gave an opaque error.</b></li>
+              </ol>
+              <h4>Found, but older than this PR, so left for their own PRs</h4>
+              <ul><li>Under a provider allow-list, a model selection can still name a disallowed provider.</li><li><code>changed</code> compares against built-in defaults, not the policy's.</li><li>The Branch prefix input in Settings drops what you're typing if something else writes it.</li><li>Nested <code>__proto__</code> entries say saved but get dropped.</li></ul>
+              <h4>Reviews and evals</h4>
+              <ul><li>A Gemini 4 Neon audit and a Fable 5.2 security review covered the whole diff. No critical or high findings.</li><li>On Sonnet 5.5, “user-only setting is left to the user” and “project edit leaves settings alone” both passed 3/3. “Setting request uses settings update” failed: the agent treated “stop keeping my machine awake” as a code change and never looked for T3's own tools. A line in T3's agent instructions should fix that.</li></ul>
+            </div>
+          </details>
+        </article>
+
+        <article class="pr" data-pr="42306">
+          <div class="head">
+            <div class="body">
+              <span class="num">#42306 <span class="pill closed">superseded by #42297</span></span>
+              <h3><code>t3_project_update</code> now saves defaults where Settings reads them</h3>
+              <p>I found this while auditing for headless settings. The tool said it changed a project's default model, but nothing actually changed. Julius kept #42297, which fixes the same thing in the shared project service.</p>
+            </div>
+            <a class="gh" href="https://github.com/pingdotgg/t3code/pull/42306">View on GitHub ↗</a>
+          </div>
+          <details class="more">
+            <summary>How I tested it <span>6 handler tests</span></summary>
+            <div class="more-body">
+              <ul><li>An update lands in the overrides Settings reads, and leaves actions alone.</li><li>A managed lock refuses before anything changes.</li><li>A failed update restores the previous overrides, and a failed restore gets reported.</li><li>A read-back failure retries with the same command id.</li><li>With the fix reverted, the update tests fail.</li></ul>
+            </div>
+          </details>
+        </article>
+      </div>
+    </section>
+
+    <!-- PART 2 -->
+    <section class="part" id="workspace" data-part="workspace">
+      <div class="part-head">
+        <span class="part-label">Part 2</span>
+        <h2>One workspace across my laptop, VPS and phone</h2>
+      </div>
+      <div class="prose">
+        <p>I run T3 Code on a few machines, and moving between them is still clunky. You have to connect a machine, get your project onto it, and then if you want to keep going somewhere else, start a new thread and paste in context by hand.</p>
+        <p>These PRs smooth out each of those steps. Agents can do it too, since thread moves go through a tool.</p>
+      </div>
+
+      <div class="map">
+        <svg viewBox="0 0 900 250" role="img" aria-label="Laptop, VPS and phone connected by the PRs that improve each step">
+          <rect x="30" y="70" width="180" height="96" rx="12" fill="var(--accent-soft)" stroke="var(--accent)"/>
+          <text x="120" y="112" text-anchor="middle" font-size="17" font-weight="600">Laptop</text>
+          <text x="120" y="136" text-anchor="middle" class="lbl">desktop · web</text>
+          <rect x="690" y="70" width="180" height="96" rx="12" fill="var(--accent-soft)" stroke="var(--accent)"/>
+          <text x="780" y="112" text-anchor="middle" font-size="17" font-weight="600">VPS</text>
+          <text x="780" y="136" text-anchor="middle" class="lbl">ssh · T3 Connect</text>
+          <rect x="370" y="160" width="160" height="76" rx="12" fill="var(--surface)" stroke="var(--line)"/>
+          <text x="450" y="196" text-anchor="middle" font-size="17" font-weight="600">Phone</text>
+          <text x="450" y="218" text-anchor="middle" class="lbl">iOS · Android</text>
+          <path d="M210 96 L690 96" stroke="var(--accent)" stroke-width="2" fill="none" marker-end="url(#a)"/>
+          <path d="M690 140 L210 140" stroke="var(--muted)" stroke-width="2" stroke-dasharray="5 5" fill="none" marker-end="url(#b)"/>
+          <text x="450" y="84" text-anchor="middle" font-size="13" font-weight="600">Move the thread · #41771</text>
+          <text x="450" y="132" text-anchor="middle" class="lbl">and back again, the branch comes with it</text>
+          <path d="M410 160 C 300 150, 240 180, 210 160" stroke="var(--user)" stroke-width="2" fill="none" marker-end="url(#c)"/>
+          <path d="M490 160 C 600 150, 660 180, 690 160" stroke="var(--user)" stroke-width="2" fill="none" marker-end="url(#c)"/>
+          <text x="200" y="215" text-anchor="middle" class="lbl">connect: #40658, #43143</text>
+          <text x="700" y="215" text-anchor="middle" class="lbl">add the project: #41109</text>
+          <defs>
+            <marker id="a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0 L10 5 L0 10 z" fill="var(--accent)"/></marker>
+            <marker id="b" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0 L10 5 L0 10 z" fill="var(--muted)"/></marker>
+            <marker id="c" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0 L10 5 L0 10 z" fill="var(--user)"/></marker>
+          </defs>
+        </svg>
+      </div>
+
+      <div class="prs">
+        <article class="pr" data-pr="41771">
+          <div class="head">
+            <div class="body">
+              <span class="num">#41771 <span class="pill open">draft</span></span>
+              <h3>Move a thread to another machine</h3>
+              <p>Pick “Move to…” and the thread shows up on the other machine with its history, model and modes, in a worktree on the same pushed branch. The original gets archived. It's in the sidebar, the command palette and mobile, and agents get <code>t3_thread_move</code>.</p>
+            </div>
+            <a class="gh" href="https://github.com/pingdotgg/t3code/pull/41771">View on GitHub ↗</a>
+          </div>
+          <div class="media">
+            <figure class="wide"><video src="/marketing/agent-setup-and-workspace/media/66bc281deb4babe92b38ef5d4328867a.mp4" controls muted playsinline preload="metadata"></video><figcaption>Web: moving a thread from Laptop to VPS</figcaption></figure>
+          </div>
+          <details class="more">
+            <summary>Watch on iOS <span>1 video</span></summary>
+            <div class="more-body"><div class="media"><figure class="phone"><video src="/marketing/agent-setup-and-workspace/media/12a66cac8ed64ab1e7e8f63123888f7c.mp4" controls muted playsinline preload="none"></video><figcaption>iOS: moving the same thread back</figcaption></figure></div></div>
+          </details>
+          <details class="more">
+            <summary>How I tested it <span>7 adversarial scenarios · 2 manual runs · CI green</span></summary>
+            <div class="more-body">
+              <p>Two isolated dev servers stood in for “Laptop” and “VPS”, using the free Replay provider.</p>
+              <div class="tbl"><table>
+                <thead><tr><th>Scenario</th><th>What happens</th><th>Checked by</th></tr></thead>
+                <tbody>
+                  <tr><td>Queued messages after stopping a turn</td><td>The move is refused; the original stays active and the queue is kept.</td><td>Server test</td></tr>
+                  <tr><td>Two clients move the same thread at once</td><td>Both end up at one imported thread.</td><td>Concurrency test</td></tr>
+                  <tr><td>Pushed branch moves there and back</td><td>The branch follows both ways.</td><td>Web and iOS round trip</td></tr>
+                  <tr><td>Target killed mid git checkout</td><td>Nothing is published until checkout finishes; retrying after restart recovers.</td><td>Forced restart plus git test</td></tr>
+                  <tr><td>Same project title, different repo</td><td>The wrong repo isn't preselected.</td><td>Client test</td></tr>
+                  <tr><td>Last turn reverted before moving</td><td>The move notice is still visible after unarchiving.</td><td>Server test</td></tr>
+                  <tr><td>Image-only message</td><td>History shows a placeholder; the dialog says attachments stay behind.</td><td>Test plus web and iOS check</td></tr>
+                </tbody>
+              </table></div>
+              <h4>Manual runs</h4>
+              <ul><li>The first run caught an unwanted worktree, a dead end with no usable model, a “Working for” timer that never stopped, a stale warning, odd notice wording and a missing project preselect. All fixed.</li><li>The second run caught agent messages arriving as “Sent by T3 Code”. Fixed.</li></ul>
+              <h4>Known gaps</h4>
+              <ul><li>No capability flag yet, so against an older server the action shows up and then fails.</li><li>On Android the sheet can be dismissed mid-move. The move still finishes.</li><li>The move notice uses warning styling.</li></ul>
+            </div>
+          </details>
+        </article>
+
+        <article class="pr" data-pr="41109">
+          <div class="head">
+            <div class="body">
+              <span class="num">#41109 <span class="pill open">open</span></span>
+              <h3>Add your project to another machine from your phone</h3>
+              <p>On mobile you could only start a task on machines that already had the project. Now the picker has “Add to another machine”, like web does, and your draft comes along with you.</p>
+            </div>
+            <a class="gh" href="https://github.com/pingdotgg/t3code/pull/41109">View on GitHub ↗</a>
+          </div>
+          <div class="media">
+            <figure class="phone"><video src="/marketing/agent-setup-and-workspace/media/e1dfd691064fe2671cfeb2a2cd0d65a1.mp4" controls muted playsinline preload="metadata"></video><figcaption>iOS: clone to Machine B and open the task there</figcaption></figure>
+          </div>
+          <details class="more">
+            <summary>Watch on web <span>1 video</span></summary>
+            <div class="more-body"><div class="media"><figure class="wide"><video src="/marketing/agent-setup-and-workspace/media/dbf4fe9ac061ffbc22d6691a12eeb2f4.mp4" controls muted playsinline preload="none"></video><figcaption>Web: a restart mid-clone comes back as failed with Retry, and Send stays blocked</figcaption></figure></div></div>
+          </details>
+          <details class="more">
+            <summary>How I tested it <span>15 scenarios · 8 bugs fixed · 1,394 tests</span></summary>
+            <div class="more-body">
+              <p>I ran 15 of the hardest cases on the iOS Simulator against two dev servers. Eight broke, and they're all fixed here.</p>
+              <div class="tbl"><table>
+                <thead><tr><th>What broke</th><th>Fix</th></tr></thead>
+                <tbody>
+                  <tr><td>A quick double tap cloned without showing the destination</td><td>The destination screen ignores taps until it finishes opening</td></tr>
+                  <tr><td>The draft was copied, leaving a duplicate and dropping attachments</td><td>The draft moves, like on web</td></tr>
+                  <tr><td>A machine still cloning was offered again</td><td>Machines mid-clone are hidden</td></tr>
+                  <tr><td>An unrelated folder with the same name captured the draft</td><td>The target has to match the repo</td></tr>
+                  <tr><td>A restart mid-clone left an empty folder with Start enabled</td><td>Clones are journaled and come back as failed with Retry</td></tr>
+                  <tr><td>Re-adding a removed project at its old path failed</td><td>The existing checkout is reused</td></tr>
+                  <tr><td>An offline machine offered “Add environment”</td><td>It offers Reconnect</td></tr>
+                  <tr><td>Removing a failed clone left its draft behind</td><td>Its drafts are cleared</td></tr>
+                </tbody>
+              </table></div>
+              <p>These held: scope gating, going offline and back, SSH vs HTTPS for the same repo, upstream-only remotes, backgrounding mid-clone. Not checked: Android and a real tunnel.</p>
+            </div>
+          </details>
+        </article>
+
+        <article class="pr" data-pr="40658">
+          <div class="head">
+            <div class="body">
+              <span class="num">#40658 <span class="pill open">open</span></span>
+              <h3>Add Environment shows what it's connecting to</h3>
+              <p>Connecting over SSH used to just say “Adding…”, so a slow connection looked stuck. Now it says “Connecting to {host}…” with a spinner, errors show up in one place, and closing the dialog doesn't lose track of the attempt.</p>
+            </div>
+            <a class="gh" href="https://github.com/pingdotgg/t3code/pull/40658">View on GitHub ↗</a>
+          </div>
+          <details class="more">
+            <summary>See it <span>before/after · web, desktop and iOS videos</span></summary>
+            <div class="more-body">
+              <div class="media">
+                <figure class="full"><img src="/marketing/agent-setup-and-workspace/media/7fcd62aa7612abd759129c8d16d400d0.png" alt="Add Environment dialog before and after, in ready, connecting and failed states" loading="lazy"><figcaption>Before and after: ready, connecting, failed</figcaption></figure>
+                <figure class="wide"><video src="/marketing/agent-setup-and-workspace/media/62e33da0d82ac4de294a84e0fb3a3dc9.mp4" controls muted playsinline preload="none"></video><figcaption>Web: progress, a timeout, refusing this app's own host, then a successful pair</figcaption></figure>
+                <figure class="wide"><video src="/marketing/agent-setup-and-workspace/media/8ce5a3b9161281f03af99d81c4c14a4d.mp4" controls muted playsinline preload="none"></video><figcaption>Desktop: SSH progress names the host</figcaption></figure>
+                <figure class="phone"><video src="/marketing/agent-setup-and-workspace/media/908f6bbc4b2b414ffcceafe04d6cfe71.mp4" controls muted playsinline preload="none"></video><figcaption>iOS: bad code rejected, retry connects</figcaption></figure>
+              </div>
+            </div>
+          </details>
+          <details class="more">
+            <summary>How I tested it <span>8 bugs fixed · 5 new browser tests</span></summary>
+            <div class="more-body">
+              <p>I drove it in the running web app against a second dev server, a host that never answers, and a proxy that delays connections.</p>
+              <ol>
+                <li>A pending attempt locked the dialog for a different machine.</li>
+                <li>A closed attempt's late failure showed up in the next, empty dialog.</li>
+                <li>A closed attempt's late success closed the dialog you'd reopened.</li>
+                <li>A long host overflowed the button.</li>
+                <li>A pairing link with no code silently disabled the button.</li>
+                <li>Enter did nothing in the Remote link fields.</li>
+                <li>Pairing the machine you're already on burned the code, said “Backend added”, and added nothing. Now it's refused up front.</li>
+                <li>Typing a pairing URL split the token at its first character.</li>
+              </ol>
+              <p>Each fix has a test that fails without it, and all 214 connection tests pass. Not covered: a successful SSH to a real host, Android, live T3 Connect.</p>
+            </div>
+          </details>
+        </article>
+
+        <article class="pr" data-pr="43143">
+          <div class="head">
+            <div class="body">
+              <span class="num">#43143 <span class="pill open">open</span></span>
+              <h3>Mobile keeps typed pairing URLs intact</h3>
+              <p>A small one I hit while recording #40658. Typing a full pairing URL on mobile mangled it. Now it splits into address and code when you leave the field or submit.</p>
+            </div>
+            <a class="gh" href="https://github.com/pingdotgg/t3code/pull/43143">View on GitHub ↗</a>
+          </div>
+          <details class="more">
+            <summary>Before and after <span>2 screenshots</span></summary>
+            <div class="more-body">
+              <div class="media">
+                <figure class="shot"><img src="/marketing/agent-setup-and-workspace/media/32a867d312fad7c48130e9b9522c193f.jpg" alt="Before: the address ends in part of the code and the code field holds one character" loading="lazy"><figcaption>Before</figcaption></figure>
+                <figure class="shot"><img src="/marketing/agent-setup-and-workspace/media/bd1f5863de043c18eddf1c418ad16d87.jpg" alt="After: the address and complete code sit in separate fields" loading="lazy"><figcaption>After</figcaption></figure>
+              </div>
+            </div>
+          </details>
+          <details class="more">
+            <summary>How I tested it <span>10 tests · iOS Simulator</span></summary>
+            <div class="more-body">
+              <ul><li>Reproduced on <code>main</code>, then verified on an iPhone simulator: fast typing kept the URL intact, changing focus split it, and submitting added the environment.</li><li>Tests cover single-character and batched edits, pasting, and submitting while the field still has focus.</li></ul>
+            </div>
+          </details>
+        </article>
+      </div>
+    </section>
+
+    <footer>Written with Claude Opus 5.5 in Claude Code, running inside T3 Code.</footer>
+  </div>
+</main>
+
+<script>
+(() => {
+  const tabs = [...document.querySelectorAll(".tab")];
+  const cta = document.getElementById("cta");
+  const ctaNum = document.getElementById("cta-num");
+  const menu = document.getElementById("menu");
+  const firstPr = { setup: "41091", workspace: "41771" };
+  let part = "setup";
+  let pr = "41091";
+
+  const render = () => {
+    tabs.forEach(t => t.setAttribute("aria-current", String(t.dataset.part === part)));
+    cta.href = "https://github.com/pingdotgg/t3code/pull/" + pr;
+    ctaNum.textContent = "#" + pr;
+  };
+
+  const parts = [...document.querySelectorAll("section.part")];
+  const cards = [...document.querySelectorAll("article.pr")];
+  const update = () => {
+    const line = window.innerHeight * 0.35;
+    let p = "setup";
+    for (const s of parts) if (s.getBoundingClientRect().top < line) p = s.dataset.part;
+    let current = null;
+    for (const c of cards) {
+      if (c.closest("section.part").dataset.part !== p) continue;
+      const r = c.getBoundingClientRect();
+      if (r.top < window.innerHeight * 0.6) current = c.dataset.pr;
+    }
+    part = p;
+    pr = current || firstPr[p];
+    render();
+  };
+  let queued = false;
+  window.addEventListener("scroll", () => {
+    if (queued) return;
+    queued = true;
+    requestAnimationFrame(() => { queued = false; update(); });
+  }, { passive: true });
+  window.addEventListener("resize", update);
+
+  document.addEventListener("click", e => {
+    if (menu.open && !menu.contains(e.target)) menu.open = false;
+  });
+  menu.querySelectorAll("a").forEach(a => a.addEventListener("click", () => { menu.open = false; }));
+
+  const goHash = () => {
+    const id = location.hash.slice(1);
+    if (id === "setup" || id === "workspace") document.getElementById(id).scrollIntoView();
+  };
+  window.addEventListener("hashchange", goHash);
+  goHash();
+  update();
+})();
+</script>
+
+</body></html>
