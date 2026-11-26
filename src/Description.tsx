@@ -1,5 +1,3 @@
-"use client";
-
 import { useQuery } from "convex/react";
 import Markdown from "react-markdown";
 import rehypeRaw from "rehype-raw";
@@ -9,16 +7,16 @@ import { api } from "../convex/_generated/api";
 
 const REPO_URL = "https://github.com/pingdotgg/t3code";
 
-// PR bodies link to repo paths and #123 issues the way GitHub does; make those absolute.
+// PR bodies link to repo paths and #123 refs the way GitHub does; make those absolute.
 const resolveUrl = (url: string) =>
   url.startsWith("#") || /^[a-z][a-z0-9+.-]*:/i.test(url) ? url : `${REPO_URL}/blob/main/${url.replace(/^\.?\//, "")}`;
-const linkIssues = (md: string) =>
+const linkRefs = (md: string) =>
   md.replace(/(^|[\s(])#(\d{2,6})\b/g, (_, pre: string, n: string) => `${pre}[#${n}](${REPO_URL}/pull/${n})`);
 
-export function Description({ n }: { n: number }) {
-  const body = useQuery(api.prs.description, { n });
-  if (body === undefined) return <div className="md muted">Loading description…</div>;
-  if (!body?.trim()) return <div className="md muted">No description.</div>;
+export function Description({ number }: { number: number }) {
+  const body = useQuery(api.prs.description, { number });
+  if (body === undefined) return <p className="muted">Loading description…</p>;
+  if (!body?.trim()) return <p className="muted">No description.</p>;
   return (
     <div className="md">
       <Markdown
@@ -28,7 +26,7 @@ export function Description({ n }: { n: number }) {
         urlTransform={resolveUrl}
         components={{ a: ({ node: _node, ...props }) => <a {...props} target="_blank" rel="noopener noreferrer" /> }}
       >
-        {linkIssues(body)}
+        {linkRefs(body)}
       </Markdown>
     </div>
   );

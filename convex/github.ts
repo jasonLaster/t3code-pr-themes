@@ -1,9 +1,9 @@
 import { internal } from "./_generated/api";
 import { internalAction } from "./_generated/server";
-import { THEME_NAMES, themeOf, type Payload } from "../lib/themes";
+import { themeOf } from "../shared/themes";
 
 const REPO = { owner: "pingdotgg", name: "t3code" };
-const FOCUS: Record<string, "julius" | "theo"> = { juliusmarminge: "julius", t3dotgg: "theo" };
+const BODY_BATCH = 200;
 
 type GithubPr = {
   number: number;
@@ -11,75 +11,107 @@ type GithubPr = {
   body: string;
   isDraft: boolean;
   createdAt: string;
+  updatedAt: string;
   additions: number;
   deletions: number;
   author: { login: string } | null;
 };
+type Blob = { text: string } | null;
+type Page = {
+  errors?: unknown;
+  data: {
+    repository: {
+      vouched?: Blob;
+      maintainers?: Blob;
+      pullRequests: { nodes: GithubPr[]; pageInfo: { hasNextPage: boolean; endCursor: string | null } };
+    };
+  };
+};
 
-const QUERY = `query($owner:String!,$name:String!,$after:String){
+const QUERY = `query($owner:String!,$name:String!,$after:String,$first:Boolean!){
   repository(owner:$owner,name:$name){
+    vouched: object(expression:"main:.github/VOUCHED.td") @include(if:$first) { ... on Blob { text } }
+    maintainers: object(expression:"main:.github/TRIAGE_EXEMPTIONS.td") @include(if:$first) { ... on Blob { text } }
     pullRequests(states:OPEN,first:100,after:$after,orderBy:{field:CREATED_AT,direction:DESC}){
       pageInfo{hasNextPage endCursor}
-      nodes{number title body isDraft createdAt additions deletions author{login}}
+      nodes{number title body isDraft createdAt updatedAt additions deletions author{login}}
     }
   }
 }`;
 
-async function fetchOpenPrs(token: string) {
-  const prs: GithubPr[] = [];
-  let after: string | null = null;
-  do {
-    const res = await fetch("https://api.github.com/graphql", {
-      method: "POST",
-      headers: {
-        authorization: `bearer ${token}`,
-        "content-type": "application/json",
-        "user-agent": "t3code-pr-themes",
-      },
-      body: JSON.stringify({ query: QUERY, variables: { ...REPO, after } }),
-    });
-    const body = (await res.json()) as {
-      errors?: unknown;
-      data: {
-        repository: {
-          pullRequests: { nodes: GithubPr[]; pageInfo: { hasNextPage: boolean; endCursor: string | null } };
-        };
-      };
-    };
-    if (!res.ok || body.errors) {
-      throw new Error(`GitHub ${res.status}: ${JSON.stringify(body.errors ?? body).slice(0, 500)}`);
-    }
-    const page = body.data.repository.pullRequests;
-    prs.push(...page.nodes);
-    after = page.pageInfo.hasNextPage ? page.pageInfo.endCursor : null;
-  } while (after);
-  return prs;
-}
-
-function buildPayload(prs: GithubPr[]) {
-  const payload: Payload = { themes: THEME_NAMES, focus: [], others: [] };
-  const bodies: { n: number; body: string }[] = [];
-  for (const pr of prs.sort((a, b) => b.number - a.number)) {
-    const th = themeOf(pr.title);
-    const g = pr.author ? FOCUS[pr.author.login] : undefined;
-    if (g) {
-      payload.focus.push({
-        n: pr.number,
-        t: pr.title,
-        g,
-        d: pr.isDraft,
-        c: pr.createdAt,
-        add: pr.additions,
-        dele: pr.deletions,
-        th,
-        k: pr.title.match(/^(\w+)/)?.[1].toLowerCase() ?? "",
+// GitHub's GraphQL API intermittently returns 502s or empty bodies on pages
+// that include PR bodies, so each page gets a few attempts.
+async function fetchPage(token: string, after: string | null): Promise<Page> {
+  let lastError: unknown;
+  for (let attempt = 0; attempt < 4; attempt++) {
+    if (attempt > 0) await new Promise((r) => setTimeout(r, 1000 * 2 ** attempt));
+    try {
+      const res = await fetch("https://api.github.com/graphql", {
+        method: "POST",
+        headers: {
+          authorization: `bearer ${token}`,
+          "content-type": "application/json",
+          "user-agent": "t3code-pr-themes",
+        },
+        body: JSON.stringify({ query: QUERY, variables: { ...REPO, after, first: after === null } }),
       });
-      bodies.push({ n: pr.number, body: pr.body });
-    } else {
-      payload.others.push([THEME_NAMES.indexOf(th), pr.createdAt.slice(0, 16)]);
+      const text = await res.text();
+      const body = text ? (JSON.parse(text) as Page) : null;
+      if (res.ok && body && !body.errors) return body;
+      lastError = new Error(`GitHub ${res.status}: ${(body?.errors ? JSON.stringify(body.errors) : text).slice(0, 300)}`);
+    } catch (error) {
+      lastError = error;
     }
   }
-  return { payload, bodies };
+  throw lastError;
+}
+
+async function fetchRepo(token: string) {
+  const prs: GithubPr[] = [];
+  let files = { vouched: "", maintainers: "" };
+  let after: string | null = null;
+  do {
+    const repo: Page["data"]["repository"] = (await fetchPage(token, after)).data.repository;
+    if (after === null) files = { vouched: repo.vouched?.text ?? "", maintainers: repo.maintainers?.text ?? "" };
+    prs.push(...repo.pullRequests.nodes);
+    after = repo.pullRequests.pageInfo.hasNextPage ? repo.pullRequests.pageInfo.endCursor : null;
+  } while (after);
+  return { prs, files };
+}
+
+type Tier = "maintainer" | "vouched" | "denounced";
+
+/** Parses `github:user` and `-github:user reason` lines from the repo's .td trust files. */
+function parseContributors(files: { vouched: string; maintainers: string }) {
+  const byLogin = new Map<string, { login: string; tier: Tier; reason?: string }>();
+  const lines = (text: string) => text.split("\n").map((l) => l.trim()).filter((l) => l && !l.startsWith("#"));
+  for (const line of lines(files.vouched)) {
+    const m = line.match(/^(-?)github:(\S+)\s*(.*)$/);
+    if (!m) continue;
+    const login = m[2].toLowerCase();
+    byLogin.set(login, m[1] ? { login, tier: "denounced", reason: m[3] || undefined } : { login, tier: "vouched" });
+  }
+  for (const line of lines(files.maintainers)) {
+    const m = line.match(/^github:(\S+)/);
+    if (m && byLogin.get(m[1].toLowerCase())?.tier !== "denounced") {
+      byLogin.set(m[1].toLowerCase(), { login: m[1].toLowerCase(), tier: "maintainer" });
+    }
+  }
+  return [...byLogin.values()];
+}
+
+// cyrb53: a fast 53-bit string hash, enough to notice that a body changed.
+function hash(str: string) {
+  let h1 = 0xdeadbeef;
+  let h2 = 0x41c6ce57;
+  for (let i = 0; i < str.length; i++) {
+    const ch = str.charCodeAt(i);
+    h1 = Math.imul(h1 ^ ch, 2654435761);
+    h2 = Math.imul(h2 ^ ch, 1597334677);
+  }
+  h1 = Math.imul(h1 ^ (h1 >>> 16), 2246822507) ^ Math.imul(h2 ^ (h2 >>> 13), 3266489909);
+  h2 = Math.imul(h2 ^ (h2 >>> 16), 2246822507) ^ Math.imul(h1 ^ (h1 >>> 13), 3266489909);
+  return (4294967296 * (2097151 & h2) + (h1 >>> 0)).toString(36);
 }
 
 export const refresh = internalAction({
@@ -88,8 +120,27 @@ export const refresh = internalAction({
     try {
       const token = process.env.GITHUB_TOKEN;
       if (!token) throw new Error("GITHUB_TOKEN is not set on this Convex deployment");
-      const { payload, bodies } = buildPayload(await fetchOpenPrs(token));
-      await ctx.runMutation(internal.prs.save, { json: JSON.stringify(payload), bodies });
+      const { prs, files } = await fetchRepo(token);
+      const rows = prs.map((pr) => ({
+        number: pr.number,
+        title: pr.title,
+        author: pr.author?.login ?? "ghost",
+        draft: pr.isDraft,
+        createdAt: pr.createdAt,
+        updatedAt: pr.updatedAt,
+        additions: pr.additions,
+        deletions: pr.deletions,
+        theme: themeOf(pr.title),
+        kind: pr.title.match(/^(\w+)/)?.[1].toLowerCase() ?? "",
+        bodyHash: hash(pr.body),
+      }));
+      const changed = new Set(
+        await ctx.runMutation(internal.prs.save, { rows, contributors: parseContributors(files) }),
+      );
+      const bodies = prs.filter((pr) => changed.has(pr.number)).map((pr) => ({ number: pr.number, body: pr.body }));
+      for (let i = 0; i < bodies.length; i += BODY_BATCH) {
+        await ctx.runMutation(internal.prs.saveBodies, { bodies: bodies.slice(i, i + BODY_BATCH) });
+      }
     } catch (error) {
       await ctx.runMutation(internal.prs.fail, { error: String(error) });
       throw error;
