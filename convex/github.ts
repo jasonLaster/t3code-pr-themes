@@ -87,7 +87,7 @@ const QUERY = `query($owner:String!,$name:String!,$after:String,$first:Boolean!,
 
 const MERGE_QUERY = `query($owner:String!,$name:String!,$after:String){
   repository(owner:$owner,name:$name){
-    pullRequests(states:OPEN,first:100,after:$after,orderBy:{field:CREATED_AT,direction:DESC}){
+    pullRequests(states:OPEN,first:25,after:$after,orderBy:{field:CREATED_AT,direction:DESC}){
       pageInfo{hasNextPage endCursor}
       nodes{number headRefOid mergeable mergeStateStatus reviewDecision}
     }
@@ -187,9 +187,10 @@ async function graphql<T>(token: string, query: string, variables: Record<string
         signal: AbortSignal.timeout(20_000),
       });
       const text = await res.text();
-      const body = text ? (JSON.parse(text) as { errors?: unknown; data?: T }) : null;
+      const body = text.trimStart().startsWith("{") ? (JSON.parse(text) as { errors?: unknown; data?: T }) : null;
       if (res.ok && body?.data && !body.errors) return body.data;
-      const message = `GitHub ${res.status}: ${(body?.errors ? JSON.stringify(body.errors) : text).slice(0, 300)}`;
+      const details = body?.errors ? JSON.stringify(body.errors) : body ? text : res.statusText;
+      const message = `GitHub ${res.status}: ${details.slice(0, 300)}`;
       if (res.status === 429 || text.toLowerCase().includes("rate limit")) {
         const reset = res.headers.get("x-ratelimit-remaining") === "0" ? Number(res.headers.get("x-ratelimit-reset")) * 1000 : 0;
         const delay = Number(res.headers.get("retry-after")) * 1000 || 120_000;
@@ -608,8 +609,10 @@ export const refreshMerge = internalAction({
       });
     } catch (error) {
       const retryAt = error instanceof GitHubRateLimitError ? error.retryAt : undefined;
-      if (retryAt && attempt < 3 && retryAt - startedAt < 15 * 60_000) {
-        await ctx.scheduler.runAfter(Math.max(retryAt - Date.now(), 120_000 * 2 ** attempt), internal.github.refreshMerge, { startedAt, after, attempt: attempt + 1 });
+      const now = Date.now();
+      const delay = retryAt ? Math.max(retryAt - now, 120_000 * 2 ** attempt) : 10_000 * 2 ** attempt;
+      if (attempt < 3 && now + delay - startedAt < 15 * 60_000) {
+        await ctx.scheduler.runAfter(delay, internal.github.refreshMerge, { startedAt, after, attempt: attempt + 1 });
         return;
       }
       await ctx.runMutation(internal.prs.failMergeRefresh, { startedAt, retryAt });
