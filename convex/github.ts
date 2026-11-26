@@ -8,6 +8,7 @@ const FOCUS: Record<string, "julius" | "theo"> = { juliusmarminge: "julius", t3d
 type GithubPr = {
   number: number;
   title: string;
+  body: string;
   isDraft: boolean;
   createdAt: string;
   additions: number;
@@ -19,7 +20,7 @@ const QUERY = `query($owner:String!,$name:String!,$after:String){
   repository(owner:$owner,name:$name){
     pullRequests(states:OPEN,first:100,after:$after,orderBy:{field:CREATED_AT,direction:DESC}){
       pageInfo{hasNextPage endCursor}
-      nodes{number title isDraft createdAt additions deletions author{login}}
+      nodes{number title body isDraft createdAt additions deletions author{login}}
     }
   }
 }`;
@@ -55,8 +56,9 @@ async function fetchOpenPrs(token: string) {
   return prs;
 }
 
-function buildPayload(prs: GithubPr[]): Payload {
+function buildPayload(prs: GithubPr[]) {
   const payload: Payload = { themes: THEME_NAMES, focus: [], others: [] };
+  const bodies: { n: number; body: string }[] = [];
   for (const pr of prs.sort((a, b) => b.number - a.number)) {
     const th = themeOf(pr.title);
     const g = pr.author ? FOCUS[pr.author.login] : undefined;
@@ -72,11 +74,12 @@ function buildPayload(prs: GithubPr[]): Payload {
         th,
         k: pr.title.match(/^(\w+)/)?.[1].toLowerCase() ?? "",
       });
+      bodies.push({ n: pr.number, body: pr.body });
     } else {
       payload.others.push([THEME_NAMES.indexOf(th), pr.createdAt.slice(0, 16)]);
     }
   }
-  return payload;
+  return { payload, bodies };
 }
 
 export const refresh = internalAction({
@@ -85,8 +88,8 @@ export const refresh = internalAction({
     try {
       const token = process.env.GITHUB_TOKEN;
       if (!token) throw new Error("GITHUB_TOKEN is not set on this Convex deployment");
-      const payload = buildPayload(await fetchOpenPrs(token));
-      await ctx.runMutation(internal.prs.save, { json: JSON.stringify(payload) });
+      const { payload, bodies } = buildPayload(await fetchOpenPrs(token));
+      await ctx.runMutation(internal.prs.save, { json: JSON.stringify(payload), bodies });
     } catch (error) {
       await ctx.runMutation(internal.prs.fail, { error: String(error) });
       throw error;

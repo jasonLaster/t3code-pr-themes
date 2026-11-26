@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState, type MouseEvent } from "react";
 import type { FocusPr, Payload } from "../lib/themes";
+import { Description } from "./Description";
 
 type Group = "julius" | "theo" | "others";
 type Row = { g: Group; th: string; ms: number; pr?: FocusPr };
@@ -63,6 +64,13 @@ export function Dashboard({ payload, fetchedAt }: { payload: Payload; fetchedAt:
   const [showTable, setShowTable] = useState(false);
   const [tip, setTip] = useState<{ x: number; y: number; theme: string } | null>(null);
   const listRef = useRef<HTMLDivElement>(null);
+  const [expanded, setExpanded] = useState<ReadonlySet<number>>(new Set());
+  const toggle = (n: number) =>
+    setExpanded((cur) => {
+      const next = new Set(cur);
+      if (!next.delete(n)) next.add(n);
+      return next;
+    });
 
   // Ranges are measured from when the data was fetched, not from the viewer's clock.
   const asOf = fetchedAt;
@@ -246,14 +254,25 @@ export function Dashboard({ payload, fetchedAt }: { payload: Payload; fetchedAt:
                   </summary>
                   <ul className="prs">
                     {rs.map(({ pr, g, ms }) => (
-                      <li key={pr.n}>
-                        <i className="dot" style={{ background: `var(--${g})` }} title={NAME[g]} />
+                      <li key={pr.n} className={expanded.has(pr.n) ? "open" : undefined}>
+                        <button
+                          className="expand"
+                          aria-expanded={expanded.has(pr.n)}
+                          aria-label={`${expanded.has(pr.n) ? "Hide" : "Show"} description of #${pr.n}`}
+                          onClick={() => toggle(pr.n)}
+                        >
+                          <i className="dot" style={{ background: `var(--${g})` }} title={NAME[g]} />
+                        </button>
                         <span className="no">#{pr.n}</span>
-                        <a href={prUrl(pr.n)} target="_blank" rel="noopener">
-                          {pr.d && <span className="tag">draft</span>}
-                          {pr.t}
-                        </a>
+                        <span>
+                          <button className="title" onClick={() => toggle(pr.n)}>
+                            {pr.d && <span className="tag">draft</span>}
+                            {pr.t}
+                          </button>{" "}
+                          <a className="gh" href={prUrl(pr.n)} target="_blank" rel="noopener">GitHub ↗</a>
+                        </span>
                         <span className="meta">+{fmt(pr.add)} −{fmt(pr.dele)} · {fmtDate(ms)}</span>
+                        {expanded.has(pr.n) && <Description n={pr.n} />}
                       </li>
                     ))}
                   </ul>

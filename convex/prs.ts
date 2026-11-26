@@ -4,7 +4,7 @@ import { internalMutation, mutation, query, type MutationCtx } from "./_generate
 
 const STALE_MS = 5 * 60 * 1000;
 // A refresh that hasn't finished in this long is assumed dead and may be retried.
-const REFRESH_TIMEOUT_MS = 2 * 60 * 1000;
+const REFRESH_TIMEOUT_MS = 4 * 60 * 1000;
 
 export const snapshot = query({
   args: {},
@@ -41,12 +41,31 @@ export const scheduledRefresh = internalMutation({
   handler: (ctx) => startRefresh(ctx, true),
 });
 
+export const description = query({
+  args: { n: v.number() },
+  handler: async (ctx, { n }) => {
+    const doc = await ctx.db.query("descriptions").withIndex("by_n", (q) => q.eq("n", n)).first();
+    return doc?.body ?? null;
+  },
+});
+
 export const save = internalMutation({
-  args: { json: v.string() },
-  handler: async (ctx, { json }) => {
+  args: { json: v.string(), bodies: v.array(v.object({ n: v.number(), body: v.string() })) },
+  handler: async (ctx, { json, bodies }) => {
     const snap = await ctx.db.query("snapshots").first();
     if (!snap) await ctx.db.insert("snapshots", { json });
     else if (snap.json !== json) await ctx.db.patch(snap._id, { json });
+
+    // Only touch changed rows so subscribers to unchanged descriptions aren't re-sent.
+    const existing = new Map((await ctx.db.query("descriptions").collect()).map((d) => [d.n, d]));
+    for (const { n, body } of bodies) {
+      const doc = existing.get(n);
+      if (!doc) await ctx.db.insert("descriptions", { n, body });
+      else if (doc.body !== body) await ctx.db.patch(doc._id, { body });
+      existing.delete(n);
+    }
+    for (const stale of existing.values()) await ctx.db.delete(stale._id);
+
     const s = await ctx.db.query("status").first();
     const done = { fetchedAt: Date.now(), refreshStartedAt: undefined, lastError: undefined };
     if (s) await ctx.db.patch(s._id, done);
