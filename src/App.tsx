@@ -9,10 +9,12 @@ import {
   CircleDashedIcon,
   CircleDotIcon,
   ClockIcon,
+  FileTextIcon,
   GitPullRequestDraftIcon,
   GitPullRequestIcon,
   ListFilterIcon,
   ListIcon,
+  MessageSquareIcon,
   MessageSquareWarningIcon,
   SearchIcon,
   ShapesIcon,
@@ -22,7 +24,7 @@ import {
   XCircleIcon,
   XIcon,
 } from "lucide-react";
-import { lazy, memo, Suspense, useDeferredValue, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { lazy, memo, Suspense, useCallback, useDeferredValue, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { api } from "../convex/_generated/api";
 import { PR_LABELS, PR_STATES } from "../shared/history";
 import { ChecksPanel } from "@/ChecksPanel";
@@ -97,6 +99,9 @@ import { isHistorical, useHistory, useRevalidateOnView, useSyncedPrs, type Pr } 
 
 // The markdown stack and insights charts are loaded on demand to keep the initial bundle lean.
 const Description = lazy(() => import("@/Description").then((m) => ({ default: m.Description })));
+const Comments = lazy(() => import("@/Comments").then((m) => ({ default: m.Comments })));
+type PaneTab = "description" | "comments";
+const PANE_TAB_KEY = "pane:tab";
 const InsightsView = lazy(() => import("@/components/insights").then((m) => ({ default: m.InsightsView })));
 
 const prUrl = (n: number) => `https://github.com/pingdotgg/t3code/pull/${n}`;
@@ -366,6 +371,19 @@ export function App() {
   const [segment, setSegment] = useState<SegmentBy>(initial.segment);
   const [pane, setPane] = useState<number | null>(initial.pr);
   const [selected, setSelected] = useState<number | null>(initial.pr);
+  const [paneTab, setPaneTab] = useState<PaneTab>(() => {
+    try {
+      return localStorage.getItem(PANE_TAB_KEY) === "comments" ? "comments" : "description";
+    } catch {
+      return "description";
+    }
+  });
+  const choosePaneTab = useCallback((tab: PaneTab) => {
+    setPaneTab(tab);
+    try {
+      localStorage.setItem(PANE_TAB_KEY, tab);
+    } catch {}
+  }, []);
   const [collapsed, setCollapsed] = useState<ReadonlySet<string>>(new Set());
   const [palette, setPalette] = useState(false);
   const [help, setHelp] = useState(false);
@@ -522,8 +540,8 @@ export function App() {
   };
 
   // Global shortcuts read the latest render's handlers through a ref.
-  const keys = useRef({ move, openPr, selected, pane, q, palette, view });
-  keys.current = { move, openPr, selected, pane, q, palette, view };
+  const keys = useRef({ move, openPr, selected, pane, q, palette, view, paneTab, choosePaneTab });
+  keys.current = { move, openPr, selected, pane, q, palette, view, paneTab, choosePaneTab };
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       const k = keys.current;
@@ -567,6 +585,11 @@ export function App() {
               Enter: () => k.selected && k.openPr(k.selected),
               " ": () => (k.pane ? setPane(null) : k.selected && k.openPr(k.selected)),
               o: () => k.selected && window.open(prUrl(k.selected), "_blank", "noopener"),
+              c: () => {
+                if (!k.selected) return;
+                if (!k.pane) k.openPr(k.selected);
+                k.choosePaneTab(k.pane && k.paneTab === "comments" ? "description" : "comments");
+              },
             }
           : {}),
       };
@@ -1158,14 +1181,36 @@ export function App() {
                       <span className="text-(--maintainer)">+{fmt(paneRow.additions)}</span> <span className="text-destructive/80">−{fmt(paneRow.deletions)}</span>
                     </dd>
                   </dl>
+                  {paneRow.open && paneChecksAvailable && <ChecksPanel pr={paneRow} />}
                   {paneRow.open && (
-                    <>
-                      {paneChecksAvailable && <ChecksPanel pr={paneRow} />}
-                      <Suspense fallback={<p className="text-[13px] text-muted-foreground">Loading description…</p>}>
-                        <Description number={paneRow.number} />
-                      </Suspense>
-                    </>
+                    <SegmentedControl
+                      aria-label="Pull request content"
+                      value={paneTab}
+                      onValueChange={(v) => v && choosePaneTab(v as PaneTab)}
+                      className="mb-5 grid w-full grid-cols-2"
+                    >
+                      <SegmentedControlIndicator />
+                      <SegmentedControlItem value="description">
+                        <FileTextIcon aria-hidden="true" />
+                        Description
+                      </SegmentedControlItem>
+                      <SegmentedControlItem value="comments">
+                        <MessageSquareIcon aria-hidden="true" />
+                        Comments
+                        <Kbd className="ml-1 h-4 min-w-4 px-1 text-[10px]">C</Kbd>
+                      </SegmentedControlItem>
+                    </SegmentedControl>
                   )}
+                  <Suspense fallback={<p className="text-[13px] text-muted-foreground">Loading…</p>}>
+                    {paneRow.open && paneTab === "description" ? (
+                      <Description number={paneRow.number} />
+                    ) : (
+                      <>
+                        {!paneRow.open && <h3 className="mb-3 text-xs font-medium text-muted-foreground">Comments</h3>}
+                        <Comments number={paneRow.number} updatedAt={paneRow.updatedAt} />
+                      </>
+                    )}
+                  </Suspense>
                 </>
               ) : (
                 <p className="text-[13px] text-muted-foreground">
@@ -1208,6 +1253,7 @@ export function App() {
               ["J / K", "Move down / up"],
               ["↵ or Space", "Open the selected PR"],
               ["O", "Open on GitHub"],
+              ["C", "Show the PR's GitHub comments"],
               ["I / ⇧⌘I", "Switch between List and Insights"],
               ["Esc", "Close the PR, then clear filters"],
             ].map(([k, label]) => (
