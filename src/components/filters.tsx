@@ -3,7 +3,7 @@ import { useState, type ReactNode } from "react";
 import { Command, CommandEmpty, CommandGroup, CommandGroupLabel, CommandInput, CommandItem, CommandList, CommandPage } from "@/components/ui/command";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { cn } from "@/lib/utils";
-import { flipGroup, formatOpenedRange, isActive, parseQuery, removeGroup, toggleToken, type FilterKey } from "@/model";
+import { flipGroup, isActive, parseQuery, removeGroup, toggleToken, type FilterKey } from "@/query";
 
 export type FacetValue = { value: string; label: string; count?: number; leading?: ReactNode };
 export type Facet = {
@@ -13,6 +13,8 @@ export type Facet = {
   icon: LucideIcon;
   /** One value at a time, like a date range: picking one replaces the other and closes the menu. */
   single?: boolean;
+  /** Chip text for typed values that aren't menu choices, like a date span. */
+  formatValue?: (value: string) => string | null;
   values: FacetValue[];
 };
 
@@ -157,10 +159,9 @@ export function FilterChips({ facets, q, setQ }: { facets: Facet[]; q: string; s
       {groups.map(({ key, neg, values }) => {
         const facet = facets.find((f) => f.key === key);
         if (!facet) return null;
-        const labelOf = (v: string) =>
-          (key === "opened" ? formatOpenedRange(v) : null) ?? facet.values.find((x) => x.value === v)?.label ?? v;
-        const isDateRange = key === "opened" && values.length === 1 && formatOpenedRange(values[0]) !== null;
-        const op = isDateRange ? "during" : facet.single ? "within" : values.length > 1 ? (neg ? "is none of" : "is any of") : neg ? "is not" : "is";
+        const labelOf = (v: string) => facet.values.find((x) => x.value === v)?.label ?? facet.formatValue?.(v) ?? v;
+        const isSpan = values.length === 1 && !facet.values.some((x) => x.value === values[0]) && !!facet.formatValue?.(values[0]);
+        const op = isSpan ? (neg ? "not during" : "during") : values.length > 1 ? (neg ? "is none of" : "is any of") : neg ? "is not" : "is";
         return (
           <div
             key={`${key}${neg}`}
@@ -170,13 +171,9 @@ export function FilterChips({ facets, q, setQ }: { facets: Facet[]; q: string; s
               <facet.icon className="size-3" aria-hidden="true" />
               {facet.label}
             </span>
-            {facet.single ? (
-              <span className="flex items-center px-1.5 text-muted-foreground">{op}</span>
-            ) : (
-              <button className={cn(seg, "text-muted-foreground")} onClick={() => setQ((cur) => flipGroup(cur, key, neg))} title="Switch between is and is not">
-                {op}
-              </button>
-            )}
+            <button className={cn(seg, "text-muted-foreground")} onClick={() => setQ((cur) => flipGroup(cur, key, neg))} title="Switch between is and is not">
+              {op}
+            </button>
             <FilterMenu
               facets={facets}
               q={q}

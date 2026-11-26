@@ -18,19 +18,9 @@ import type { Facet } from "@/components/filters";
 import { Command, CommandEmpty, CommandGroup, CommandGroupLabel, CommandInput, CommandItem, CommandList, CommandPage } from "@/components/ui/command";
 import { Dialog, DialogBackdrop, DialogContent, DialogTitle } from "@/components/ui/dialog";
 import { Kbd } from "@/components/ui/kbd";
-import {
-  GROUP_LABEL,
-  MEASURE_LABEL,
-  SLICE_LABEL,
-  SORT_LABEL,
-  isActive,
-  toggleToken,
-  type GroupBy,
-  type Measure,
-  type SliceBy,
-  type SortBy,
-  type ViewMode,
-} from "@/model";
+import type { GroupOption } from "@/fields";
+import { MEASURE_LABEL, SLICE_LABEL, SORT_LABEL, type Measure, type SliceBy, type SortBy, type ViewMode } from "@/model";
+import { isActive, toggleToken } from "@/query";
 import type { Pr } from "@/sync";
 
 type Props = {
@@ -42,7 +32,8 @@ type Props = {
   setQ: (update: (q: string) => string) => void;
   view: ViewMode;
   setView: (v: ViewMode) => void;
-  setGroup: (g: GroupBy) => void;
+  groups: GroupOption[];
+  setGroup: (g: string) => void;
   setSort: (s: SortBy) => void;
   setMeasure: (m: Measure) => void;
   setSlice: (s: SliceBy) => void;
@@ -61,6 +52,7 @@ export function CommandPalette({
   setQ,
   view,
   setView,
+  groups,
   setGroup,
   setSort,
   setMeasure,
@@ -232,9 +224,10 @@ export function CommandPalette({
               ))}
             </CommandPage>
             <CommandPage value="group">
-              {(Object.keys(GROUP_LABEL) as GroupBy[]).map((g) => (
-                <CommandItem key={g} value={`group:${g}`} label={GROUP_LABEL[g]} onSelect={run(() => setGroup(g))}>
-                  {GROUP_LABEL[g]}
+              {groups.map((g) => (
+                <CommandItem key={g.value} value={`group:${g.value}`} label={g.label} onSelect={run(() => setGroup(g.value))}>
+                  {g.icon && <g.icon />}
+                  {g.label}
                 </CommandItem>
               ))}
             </CommandPage>
