@@ -165,5 +165,8 @@ export default defineSchema({
     fetchedAt: v.optional(v.number()),
     refreshStartedAt: v.optional(v.number()),
     lastError: v.optional(v.string()),
+    githubRetryAt: v.optional(v.number()),
+    mergeRefreshStartedAt: v.optional(v.number()),
+    mergeFetchedAt: v.optional(v.number()),
   }),
 });

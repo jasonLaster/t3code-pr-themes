@@ -2,11 +2,13 @@ import { v } from "convex/values";
 import { internal } from "./_generated/api";
 import type { Doc } from "./_generated/dataModel";
 import { internalMutation, internalQuery, mutation, query, type MutationCtx } from "./_generated/server";
-import { checkDetail, ciStatus, codeRabbitStatus, conversationItem, crThreadDetail, prFields } from "./schema";
+import { checkDetail, ciStatus, codeRabbitStatus, conversationItem, crThreadDetail, mergeStatus, prFields, reviewDecision } from "./schema";
 
 const STALE_MS = 5 * 60 * 1000;
 // A refresh that hasn't finished in this long is assumed dead and may be retried.
 const REFRESH_TIMEOUT_MS = 4 * 60 * 1000;
+const MERGE_STALE_MS = 10 * 60 * 1000;
+const MERGE_TIMEOUT_MS = 20 * 60 * 1000;
 const DETAILS_PENDING_STALE_MS = 60 * 1000;
 // Historical PRs rarely change; open ones are refetched whenever their updatedAt moves.
 const COMMENTS_HISTORY_STALE_MS = 24 * 60 * 60 * 1000;
@@ -183,6 +185,8 @@ async function getStatus(ctx: MutationCtx) {
 async function startRefresh(ctx: MutationCtx, force: boolean) {
   const now = Date.now();
   const s = await getStatus(ctx);
+  if ((s.githubRetryAt ?? 0) > now) return false;
+  if (s.mergeRefreshStartedAt && now - s.mergeRefreshStartedAt < MERGE_TIMEOUT_MS) return false;
   if (s.refreshStartedAt && now - s.refreshStartedAt < REFRESH_TIMEOUT_MS) return false;
   if (!force && s.fetchedAt && now - s.fetchedAt < STALE_MS) return false;
   await ctx.db.patch(s._id, { refreshStartedAt: now });
@@ -199,6 +203,54 @@ export const revalidate = mutation({
 export const scheduledRefresh = internalMutation({
   args: {},
   handler: (ctx) => startRefresh(ctx, true),
+});
+
+export const startMergeRefresh = internalMutation({
+  args: {},
+  handler: async (ctx) => {
+    const now = Date.now();
+    const status = await getStatus(ctx);
+    if ((status.githubRetryAt ?? 0) > now || now - (status.mergeFetchedAt ?? 0) < MERGE_STALE_MS) return false;
+    if (status.refreshStartedAt && now - status.refreshStartedAt < REFRESH_TIMEOUT_MS) return false;
+    if (status.mergeRefreshStartedAt && now - status.mergeRefreshStartedAt < MERGE_TIMEOUT_MS) return false;
+    await ctx.db.patch(status._id, { mergeRefreshStartedAt: now });
+    await ctx.scheduler.runAfter(0, internal.github.refreshMerge, { startedAt: now });
+    return true;
+  },
+});
+
+export const patchMergePage = internalMutation({
+  args: {
+    startedAt: v.number(),
+    after: v.optional(v.string()),
+    items: v.array(v.object({ number: v.number(), headSha: v.string(), merge: mergeStatus, review: v.optional(reviewDecision) })),
+  },
+  handler: async (ctx, { startedAt, after, items }) => {
+    const status = await getStatus(ctx);
+    if (status.mergeRefreshStartedAt !== startedAt) return;
+    let syncId = status.syncId ?? 0;
+    for (const { number, headSha, merge, review } of items) {
+      const doc = await ctx.db.query("prs").withIndex("by_number", (q) => q.eq("number", number)).unique();
+      if (!doc?.open || doc.headSha !== headSha || (doc.merge === merge && doc.review === review)) continue;
+      await ctx.db.patch(doc._id, { merge, review, syncId: ++syncId });
+    }
+    await ctx.db.patch(status._id, { syncId });
+    if (after) {
+      await ctx.scheduler.runAfter(2_000, internal.github.refreshMerge, { startedAt, after });
+    } else {
+      await ctx.db.patch(status._id, { mergeRefreshStartedAt: undefined, mergeFetchedAt: Date.now() });
+      await ctx.scheduler.runAfter(0, internal.github.backfillCr, {});
+    }
+  },
+});
+
+export const failMergeRefresh = internalMutation({
+  args: { startedAt: v.number(), retryAt: v.optional(v.number()) },
+  handler: async (ctx, { startedAt, retryAt }) => {
+    const status = await getStatus(ctx);
+    if (status.mergeRefreshStartedAt !== startedAt) return;
+    await ctx.db.patch(status._id, { mergeRefreshStartedAt: undefined, githubRetryAt: retryAt });
+  },
 });
 
 type SaveRow = Omit<Doc<"prs">, "_id" | "_creationTime" | "syncId" | "open">;
@@ -413,9 +465,9 @@ export const patchCrBatch = internalMutation({
 });
 
 export const fail = internalMutation({
-  args: { error: v.string() },
-  handler: async (ctx, { error }) => {
+  args: { error: v.string(), retryAt: v.optional(v.number()) },
+  handler: async (ctx, { error, retryAt }) => {
     const s = await getStatus(ctx);
-    await ctx.db.patch(s._id, { refreshStartedAt: undefined, lastError: error });
+    await ctx.db.patch(s._id, { refreshStartedAt: undefined, lastError: error, githubRetryAt: retryAt });
   },
 });

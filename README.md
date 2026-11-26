@@ -20,7 +20,7 @@ npm run dev
 
 Tabs above the filter bar switch between **Open**, **Drafts**, **Merged**, **Closed** and **All**. They swap only the state and draft filters, so other filters stay. Each count shows what the tab would display. History that hasn't loaded yet shows the snapshot total.
 
-Each open PR shows GitHub's merge status: Ready, Blocked, Behind, Unstable (checks failing) or Conflicts, plus the review decision in the tooltip. The refresh stores it from `mergeable`/`mergeStateStatus`. Filter with `merge:conflicts`, or group by **Merge status** or **State**. Merged and closed rows show their final state and when it happened.
+Each open PR shows GitHub's merge status: Ready, Blocked, Behind, Unstable (checks failing) or Conflicts, plus the review decision in the tooltip. A separate refresh stores merge data one page at a time, so a GitHub rate limit preserves completed pages. Filter with `merge:conflicts`, or group by **Merge status** or **State**. Merged and closed rows show their final state and when it happened.
 
 ## Historical PRs
 

@@ -38,9 +38,6 @@ type GithubPr = {
   additions: number;
   deletions: number;
   headRefOid: string;
-  mergeable: string;
-  mergeStateStatus: string;
-  reviewDecision: string | null;
   author: { login: string } | null;
   reviewThreads: { totalCount: number };
   commits: {
@@ -74,7 +71,6 @@ const QUERY = `query($owner:String!,$name:String!,$after:String,$first:Boolean!,
       pageInfo{hasNextPage endCursor}
       nodes{
         number title body isDraft createdAt updatedAt additions deletions headRefOid
-        mergeable mergeStateStatus reviewDecision
         author{login}
         reviewThreads{totalCount}
         commits(last:1){
@@ -88,6 +84,21 @@ const QUERY = `query($owner:String!,$name:String!,$after:String,$first:Boolean!,
     }
   }
 }`;
+
+const MERGE_QUERY = `query($owner:String!,$name:String!,$after:String){
+  repository(owner:$owner,name:$name){
+    pullRequests(states:OPEN,first:100,after:$after,orderBy:{field:CREATED_AT,direction:DESC}){
+      pageInfo{hasNextPage endCursor}
+      nodes{number headRefOid mergeable mergeStateStatus reviewDecision}
+    }
+  }
+}`;
+type MergePage = {
+  repository: { pullRequests: {
+    pageInfo: { hasNextPage: boolean; endCursor: string | null };
+    nodes: { number: number; headRefOid: string; mergeable: string; mergeStateStatus: string; reviewDecision: string | null }[];
+  } };
+};
 
 const DETAILS_QUERY = `query($owner:String!,$name:String!,$number:Int!){
   repository(owner:$owner,name:$name){
@@ -152,6 +163,12 @@ const CHECK_RUN_PENDING = new Set(["IN_PROGRESS", "QUEUED", "PENDING", "WAITING"
 const STATUS_CTX_FAIL = new Set(["FAILURE", "ERROR"]);
 const STATUS_CTX_PENDING = new Set(["PENDING", "EXPECTED"]);
 
+class GitHubRateLimitError extends Error {
+  constructor(message: string, readonly retryAt: number) {
+    super(message);
+  }
+}
+
 // GitHub's GraphQL API intermittently returns 502s or empty 200 bodies on pages
 // that include PR bodies, so each request gets a few attempts with a hard timeout.
 async function graphql<T>(token: string, query: string, variables: Record<string, unknown>, attempts = 4): Promise<T> {
@@ -172,9 +189,15 @@ async function graphql<T>(token: string, query: string, variables: Record<string
       const text = await res.text();
       const body = text ? (JSON.parse(text) as { errors?: unknown; data?: T }) : null;
       if (res.ok && body?.data && !body.errors) return body.data;
-      lastError = new Error(`GitHub ${res.status}: ${(body?.errors ? JSON.stringify(body.errors) : text).slice(0, 300)}`);
-      if (res.status === 403 && text.toLowerCase().includes("rate limit")) break;
+      const message = `GitHub ${res.status}: ${(body?.errors ? JSON.stringify(body.errors) : text).slice(0, 300)}`;
+      if (res.status === 429 || text.toLowerCase().includes("rate limit")) {
+        const reset = res.headers.get("x-ratelimit-remaining") === "0" ? Number(res.headers.get("x-ratelimit-reset")) * 1000 : 0;
+        const delay = Number(res.headers.get("retry-after")) * 1000 || 120_000;
+        throw new GitHubRateLimitError(message, Math.max(reset, Date.now() + delay));
+      }
+      lastError = new Error(message);
     } catch (error) {
+      if (error instanceof GitHubRateLimitError) throw error;
       lastError = error;
     }
   }
@@ -194,7 +217,8 @@ async function fetchRepo(token: string) {
         { ...REPO, after, first: after === null, pageSize: PAGE_SIZE },
         3,
       );
-    } catch {
+    } catch (error) {
+      if (error instanceof GitHubRateLimitError) throw error;
       // Fall back to a smaller page if GitHub timed out on a page with huge PR bodies.
       data = await graphql<Page["data"]>(
         token,
@@ -538,8 +562,6 @@ export const refresh = internalAction({
           ciFailed,
           ciPending,
           ciPassed,
-          merge: mergeOf(pr.mergeable, pr.mergeStateStatus),
-          review: pr.reviewDecision ? REVIEW[pr.reviewDecision] : undefined,
         };
       });
 
@@ -551,12 +573,46 @@ export const refresh = internalAction({
         await ctx.runMutation(internal.prs.saveBodies, { bodies: bodies.slice(i, i + BODY_BATCH) });
       }
 
-      // Gently backfill remaining PRs' CodeRabbit status without re-scanning the entire repo.
-      if (remainingUnenriched > 0) {
+      // Run optional enrichment without stacking large batches of GitHub requests.
+      const mergeStarted = await ctx.runMutation(internal.prs.startMergeRefresh, {});
+      if (!mergeStarted && remainingUnenriched > 0) {
         await ctx.scheduler.runAfter(CR_BACKFILL_DELAY_MS, internal.github.backfillCr, {});
       }
     } catch (error) {
-      await ctx.runMutation(internal.prs.fail, { error: String(error) });
+      await ctx.runMutation(internal.prs.fail, {
+        error: String(error),
+        retryAt: error instanceof GitHubRateLimitError ? error.retryAt : undefined,
+      });
+      throw error;
+    }
+  },
+});
+
+export const refreshMerge = internalAction({
+  args: { startedAt: v.number(), after: v.optional(v.string()), attempt: v.optional(v.number()) },
+  handler: async (ctx, { startedAt, after, attempt = 0 }) => {
+    try {
+      const token = process.env.GITHUB_TOKEN;
+      if (!token) throw new Error("GITHUB_TOKEN is not set on this Convex deployment");
+      const { repository: { pullRequests } } = await graphql<MergePage>(token, MERGE_QUERY, { ...REPO, after: after ?? null }, 2);
+      const items = pullRequests.nodes.map((pr) => ({
+        number: pr.number,
+        headSha: pr.headRefOid,
+        merge: mergeOf(pr.mergeable, pr.mergeStateStatus),
+        review: pr.reviewDecision ? REVIEW[pr.reviewDecision] : undefined,
+      }));
+      await ctx.runMutation(internal.prs.patchMergePage, {
+        startedAt,
+        after: pullRequests.pageInfo.hasNextPage ? pullRequests.pageInfo.endCursor ?? undefined : undefined,
+        items,
+      });
+    } catch (error) {
+      const retryAt = error instanceof GitHubRateLimitError ? error.retryAt : undefined;
+      if (retryAt && attempt < 3 && retryAt - startedAt < 15 * 60_000) {
+        await ctx.scheduler.runAfter(Math.max(retryAt - Date.now(), 120_000 * 2 ** attempt), internal.github.refreshMerge, { startedAt, after, attempt: attempt + 1 });
+        return;
+      }
+      await ctx.runMutation(internal.prs.failMergeRefresh, { startedAt, retryAt });
       throw error;
     }
   },
