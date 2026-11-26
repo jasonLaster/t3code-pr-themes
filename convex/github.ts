@@ -731,3 +731,115 @@ export const fetchPrDetails = internalAction({
     });
   },
 });
+
+const COMMENTS_QUERY = `query($owner:String!,$name:String!,$number:Int!){
+  repository(owner:$owner,name:$name){
+    pullRequest(number:$number){
+      updatedAt
+      comments(last:100){ totalCount nodes{ author{login} body createdAt url } }
+      reviews(last:100){ totalCount nodes{ author{login} body state submittedAt createdAt url } }
+      reviewThreads(last:100){
+        totalCount
+        nodes{
+          isResolved isOutdated path line
+          comments(first:30){ totalCount nodes{ author{login} body createdAt url } }
+        }
+      }
+    }
+  }
+}`;
+
+type GhComment = { author: { login: string } | null; body: string; createdAt: string; url: string };
+type CommentsResponse = {
+  repository: {
+    pullRequest: {
+      updatedAt: string;
+      comments: { totalCount: number; nodes: GhComment[] };
+      reviews: { totalCount: number; nodes: (GhComment & { state: string; submittedAt: string | null })[] };
+      reviewThreads: {
+        totalCount: number;
+        nodes: {
+          isResolved: boolean;
+          isOutdated: boolean;
+          path: string;
+          line: number | null;
+          comments: { totalCount: number; nodes: GhComment[] };
+        }[];
+      };
+    } | null;
+  };
+};
+
+// Convex documents cap at 1 MiB; bot comments (CodeRabbit walkthroughs) can be huge, so trim bodies.
+const COMMENT_BODY_CAP = 6_000;
+const COMMENTS_TOTAL_CAP = 250_000;
+
+export const fetchPrComments = internalAction({
+  args: { number: v.number() },
+  handler: async (ctx, { number }) => {
+    const token = process.env.GITHUB_TOKEN;
+    if (!token) return;
+    const data = await graphql<CommentsResponse>(token, COMMENTS_QUERY, { ...REPO, number }, 2);
+    const pr = data.repository.pullRequest;
+    if (!pr) return;
+
+    let budget = COMMENTS_TOTAL_CAP;
+    let truncated =
+      pr.comments.totalCount > pr.comments.nodes.length ||
+      pr.reviews.totalCount > pr.reviews.nodes.length ||
+      pr.reviewThreads.totalCount > pr.reviewThreads.nodes.length;
+    const trim = (body: string) => {
+      const cap = Math.min(COMMENT_BODY_CAP, Math.max(120, budget));
+      const out = body.length > cap ? `${body.slice(0, cap).trimEnd()}\n\n…` : body;
+      budget -= out.length;
+      return out;
+    };
+    const base = (c: GhComment) => ({
+      author: c.author?.login ?? "ghost",
+      createdAt: c.createdAt,
+      url: c.url || undefined,
+    });
+
+    type Item = {
+      kind: "comment" | "review" | "thread";
+      author: string;
+      body: string;
+      createdAt: string;
+      url?: string;
+      reviewState?: string;
+      path?: string;
+      line?: number;
+      resolved?: boolean;
+      outdated?: boolean;
+      replies?: { author: string; body: string; createdAt: string; url?: string }[];
+    };
+    const items: Item[] = [];
+
+    for (const c of pr.comments.nodes) items.push({ kind: "comment", ...base(c), body: trim(c.body) });
+    for (const r of pr.reviews.nodes) {
+      // A COMMENTED review with no body only wraps inline threads, which are listed on their own.
+      if (!r.body.trim() && r.state === "COMMENTED") continue;
+      if (r.state === "PENDING") continue;
+      items.push({ kind: "review", ...base(r), createdAt: r.submittedAt ?? r.createdAt, body: trim(r.body), reviewState: r.state });
+    }
+    for (const t of pr.reviewThreads.nodes) {
+      const [first, ...rest] = t.comments.nodes;
+      if (!first) continue;
+      if (t.comments.totalCount > t.comments.nodes.length) truncated = true;
+      items.push({
+        kind: "thread",
+        ...base(first),
+        body: trim(first.body),
+        path: t.path,
+        line: t.line ?? undefined,
+        resolved: t.isResolved,
+        outdated: t.isOutdated,
+        replies: rest.map((c) => ({ ...base(c), body: trim(c.body) })),
+      });
+    }
+    items.sort((a, b) => a.createdAt.localeCompare(b.createdAt));
+    if (budget <= 0) truncated = true;
+
+    await ctx.runMutation(internal.prs.saveComments, { number, updatedAt: pr.updatedAt, items, truncated });
+  },
+});

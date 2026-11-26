@@ -2,12 +2,14 @@ import { v } from "convex/values";
 import { internal } from "./_generated/api";
 import type { Doc } from "./_generated/dataModel";
 import { internalMutation, internalQuery, mutation, query, type MutationCtx } from "./_generated/server";
-import { checkDetail, ciStatus, codeRabbitStatus, crThreadDetail, prFields } from "./schema";
+import { checkDetail, ciStatus, codeRabbitStatus, conversationItem, crThreadDetail, prFields } from "./schema";
 
 const STALE_MS = 5 * 60 * 1000;
 // A refresh that hasn't finished in this long is assumed dead and may be retried.
 const REFRESH_TIMEOUT_MS = 4 * 60 * 1000;
 const DETAILS_PENDING_STALE_MS = 60 * 1000;
+// Historical PRs rarely change; open ones are refetched whenever their updatedAt moves.
+const COMMENTS_HISTORY_STALE_MS = 24 * 60 * 60 * 1000;
 
 const toClient = ({
   _id,
@@ -90,6 +92,45 @@ export const ensureDetails = mutation({
     if (existing && now - existing.fetchedAt < 10_000) return false;
     await ctx.scheduler.runAfter(0, internal.github.fetchPrDetails, { number });
     return true;
+  },
+});
+
+export const comments = query({
+  args: { number: v.number() },
+  handler: async (ctx, { number }) => {
+    const doc = await ctx.db.query("prComments").withIndex("by_number", (q) => q.eq("number", number)).first();
+    if (!doc) return null;
+    return { updatedAt: doc.updatedAt, fetchedAt: doc.fetchedAt, items: doc.items, truncated: doc.truncated };
+  },
+});
+
+/** Loads a PR's GitHub conversation on demand if missing or stale. Works for open and historical PRs. */
+export const ensureComments = mutation({
+  args: { number: v.number(), force: v.optional(v.boolean()) },
+  handler: async (ctx, { number, force }) => {
+    const pr =
+      (await ctx.db.query("prs").withIndex("by_number", (q) => q.eq("number", number)).first()) ??
+      (await ctx.db.query("prHistory").withIndex("by_number", (q) => q.eq("number", number)).first());
+    if (!pr) return false;
+    const existing = await ctx.db.query("prComments").withIndex("by_number", (q) => q.eq("number", number)).first();
+    const now = Date.now();
+    if (existing && now - existing.fetchedAt < 10_000) return false;
+    if (!force && existing) {
+      const isOpen = "open" in pr && pr.open;
+      if (isOpen ? existing.updatedAt === pr.updatedAt : now - existing.fetchedAt < COMMENTS_HISTORY_STALE_MS) return false;
+    }
+    await ctx.scheduler.runAfter(0, internal.github.fetchPrComments, { number });
+    return true;
+  },
+});
+
+export const saveComments = internalMutation({
+  args: { number: v.number(), updatedAt: v.string(), items: v.array(conversationItem), truncated: v.boolean() },
+  handler: async (ctx, { number, updatedAt, items, truncated }) => {
+    const fetchedAt = Date.now();
+    const existing = await ctx.db.query("prComments").withIndex("by_number", (q) => q.eq("number", number)).first();
+    if (existing) await ctx.db.patch(existing._id, { updatedAt, fetchedAt, items, truncated });
+    else await ctx.db.insert("prComments", { number, updatedAt, fetchedAt, items, truncated });
   },
 });
 
