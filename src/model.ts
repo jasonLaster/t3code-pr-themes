@@ -1,3 +1,4 @@
+import { assess } from "./assessment";
 import type { PrState } from "../shared/history";
 import { THEME_LIST } from "../shared/themes";
 import type { Pr } from "./sync";
@@ -120,8 +121,9 @@ export function formatOpenedRange(value: string) {
   return `${fmtDay(start, true)} – ${fmtDay(end, true)}`;
 }
 
-export type SortBy = "created" | "oldest" | "updated" | "stale" | "health" | "needs-work" | "size" | "smallest";
+export type SortBy = "score" | "created" | "oldest" | "updated" | "stale" | "health" | "needs-work" | "size" | "smallest";
 export const SORT_LABEL: Record<SortBy, string> = {
+  score: "Highest review score",
   created: "Newest",
   oldest: "Oldest",
   updated: "Recently updated",
@@ -159,6 +161,7 @@ export function groupToSlice(group: string): SliceBy {
 }
 
 export const SORTERS: Record<SortBy, (a: Pr, b: Pr) => number> = {
+  score: (a, b) => (assess(b)?.total ?? 0) - (assess(a)?.total ?? 0) || b.number - a.number,
   created: (a, b) => b.number - a.number,
   updated: (a, b) => b.updatedAt.localeCompare(a.updatedAt),
   health: (a, b) => HEALTH_RANK_GREEN_FIRST[healthOf(a)] - HEALTH_RANK_GREEN_FIRST[healthOf(b)] || b.number - a.number,

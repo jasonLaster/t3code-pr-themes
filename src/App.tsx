@@ -1,14 +1,11 @@
 import { useQuery } from "convex/react";
 import {
-  AlertCircleIcon,
   ArrowUpRightIcon,
+  ActivityIcon,
   BarChart3Icon,
-  CalendarIcon,
-  CheckCircle2Icon,
   ChevronDownIcon,
-  CircleDashedIcon,
-  ClockIcon,
   FileTextIcon,
+  GaugeIcon,
   GitMergeIcon,
   GitPullRequestClosedIcon,
   GitPullRequestDraftIcon,
@@ -17,16 +14,14 @@ import {
   ListFilterIcon,
   ListIcon,
   MessageSquareIcon,
-  MessageSquareWarningIcon,
   SearchIcon,
   ShapesIcon,
   TagIcon,
-  XCircleIcon,
   XIcon,
 } from "lucide-react";
 import { lazy, memo, Suspense, useCallback, useDeferredValue, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { api } from "../convex/_generated/api";
-import { assess, rubric } from "./assessment";
+import { assess, scoreTone } from "./assessment";
 import { ChecksPanel } from "@/ChecksPanel";
 import { CommandPalette } from "@/components/command-palette";
 import { DisplayMenu } from "@/components/display";
@@ -46,8 +41,9 @@ import { Dialog, DialogBackdrop, DialogContent, DialogTitle } from "@/components
 import { Badge, Kbd } from "@/components/ui/kbd";
 import { SegmentedControl, SegmentedControlIndicator, SegmentedControlItem } from "@/components/ui/segmented-control";
 import { cn } from "@/lib/utils";
+import { useColumns, useResizable, type Column } from "@/lib/layout";
 import { Avatar, Dot, STATE_LABEL, TierBadge, aliasOf } from "@/components/people";
-import { DATE_RANGES, FIELDS, filterOptions, groupOptions, groupPrs, isGroupKey, type Ctx, type Group } from "@/fields";
+import { FIELDS, filterOptions, groupOptions, groupPrs, isGroupKey, type Ctx, type Group } from "@/fields";
 import {
   MEASURE_LABEL,
   SEGMENT_LABEL,
@@ -55,8 +51,6 @@ import {
   SORTERS,
   SORT_LABEL,
   THEMES,
-  ciOf,
-  crOf,
   groupToSlice,
   mergeOf,
   stateOf,
@@ -90,15 +84,16 @@ import { PR_STATES } from "../shared/history";
 import { isHistorical, useHistory, useRevalidateOnView, useSyncedPrs, type Pr } from "@/sync";
 
 // The markdown stack and insights charts are loaded on demand to keep the initial bundle lean.
+const ReviewPanel = lazy(() => import("./ReviewPanel"));
 const Description = lazy(() => import("@/Description").then((m) => ({ default: m.Description })));
 const Comments = lazy(() => import("@/Comments").then((m) => ({ default: m.Comments })));
-type PaneTab = "description" | "comments";
+type PaneTab = "description" | "review" | "comments" | "ci";
+const PANE_TABS: PaneTab[] = ["description", "review", "comments", "ci"];
 const PANE_TAB_KEY = "pane:tab";
 const InsightsView = lazy(() => import("@/components/insights").then((m) => ({ default: m.InsightsView })));
 
 const prUrl = (n: number) => `https://github.com/pingdotgg/t3code/pull/${n}`;
 const fmt = (n: number) => n.toLocaleString();
-const RANGES = DATE_RANGES.filter(([v]) => !v.startsWith(">")).map(([value, label]) => ({ value, label }));
 const HISTORY_ROW_PAGE = 200;
 
 function ago(ms: number, now: number) {
@@ -140,10 +135,11 @@ function readUrl() {
   };
 }
 
-type RowProps = { pr: Pr; who: Who; tier: Tier; selected: boolean; showTheme: boolean; now: number; onOpen: (n: number) => void };
+type RowProps = { pr: Pr; who: Who; tier: Tier; selected: boolean; showTheme: boolean; now: number; hidden: ReadonlySet<Column>; onOpen: (n: number) => void };
 
-const Row = memo(function Row({ pr, who, tier, selected, showTheme, now, onOpen }: RowProps) {
-  const rating = assess(pr);
+const Row = memo(function Row({ pr, who, tier, selected, showTheme, now, hidden, onOpen }: RowProps) {
+  const rating = hidden.has("score") ? undefined : assess(pr);
+  const show = (c: Column) => !hidden.has(c);
   return (
     <div
       data-n={pr.number}
@@ -158,22 +154,27 @@ const Row = memo(function Row({ pr, who, tier, selected, showTheme, now, onOpen 
         {pr.title}
       </span>
       {rating && (
-        <Badge className="shrink-0" title={`Reviewed revision ${rating.head.slice(0, 7)} · ${rating.total}/60`}>
-          <span className="sr-only">PR review score </span>{rating.total}/60
-        </Badge>
+        <span
+          className={cn("inline-flex h-[18px] min-w-7 shrink-0 items-center justify-center rounded-full px-1.5 text-[11px] font-semibold tabular-nums", scoreTone(rating.total))}
+          title={`Review score ${rating.total}/60 · revision ${rating.head.slice(0, 7)}`}
+        >
+          <span className="sr-only">PR review score </span>{rating.total}
+        </span>
       )}
-      {showTheme && (
+      {showTheme && show("theme") && (
         <Badge className="hidden h-[22px] max-w-44 shrink-0 gap-1.5 truncate px-2 @5xl:inline-flex">
           <TagIcon className="size-3" aria-hidden="true" />
           {pr.theme}
         </Badge>
       )}
-      <span className="hidden shrink-0 @4xl:inline-flex">
-        <TierBadge tier={tier} />
-      </span>
-      <span className="hidden shrink-0 items-center justify-end gap-1 @md:inline-flex">
-        <MergeBadge pr={pr} className="w-[78px] justify-start" />
-        {isHistorical(pr) ? (
+      {show("tier") && (
+        <span className="hidden shrink-0 @4xl:inline-flex">
+          <TierBadge tier={tier} />
+        </span>
+      )}
+      <span className="hidden shrink-0 items-center justify-end gap-1 empty:hidden @md:inline-flex">
+        {show("merge") && <MergeBadge pr={pr} className="w-[78px] justify-start" />}
+        {!show("checks") ? null : isHistorical(pr) ? (
           <span className="w-[106px] text-right text-xs text-muted-foreground tabular-nums" title={new Date(pr.mergedAt ?? pr.closedAt).toLocaleString()}>
             {ago(Date.parse(pr.mergedAt ?? pr.closedAt), now)} ago
           </span>
@@ -184,43 +185,25 @@ const Row = memo(function Row({ pr, who, tier, selected, showTheme, now, onOpen 
           </>
         )}
       </span>
-      <span className="hidden w-24 shrink-0 text-right text-xs whitespace-nowrap tabular-nums @2xl:block" title={`+${pr.additions} −${pr.deletions}`}>
-        <span className="text-(--maintainer)">+{fmt(pr.additions)}</span> <span className="text-destructive/80">−{fmt(pr.deletions)}</span>
-      </span>
-      <span className="w-8 shrink-0 text-right text-xs text-muted-foreground tabular-nums" title={new Date(pr.createdAt).toLocaleString()}>
-        {ago(Date.parse(pr.createdAt), now)}
-      </span>
-      <span className="hidden w-32 shrink-0 items-center gap-1.5 text-xs text-muted-foreground @xl:flex" title={pr.author}>
-        <Avatar login={pr.author} className="size-[18px]" />
-        <span className="truncate">{pr.author}</span>
-      </span>
+      {show("changes") && (
+        <span className="hidden w-24 shrink-0 text-right text-xs whitespace-nowrap tabular-nums @2xl:block" title={`+${pr.additions} −${pr.deletions}`}>
+          <span className="text-(--maintainer)">+{fmt(pr.additions)}</span> <span className="text-destructive/80">−{fmt(pr.deletions)}</span>
+        </span>
+      )}
+      {show("age") && (
+        <span className="w-8 shrink-0 text-right text-xs text-muted-foreground tabular-nums" title={new Date(pr.createdAt).toLocaleString()}>
+          {ago(Date.parse(pr.createdAt), now)}
+        </span>
+      )}
+      {show("author") && (
+        <span className="hidden w-32 shrink-0 items-center gap-1.5 text-xs text-muted-foreground @xl:flex" title={pr.author}>
+          <Avatar login={pr.author} className="size-[18px]" />
+          <span className="truncate">{pr.author}</span>
+        </span>
+      )}
     </div>
   );
 });
-
-function Assessment({ pr }: { pr: Pr }) {
-  const scores = assess(pr);
-  return (
-    <section className="my-3 rounded-md border p-3 text-sm">
-      <h3 className="mb-2 font-semibold">PR review {scores && `· ${scores.total}/60`}</h3>
-      {scores ? (
-        <>
-          <a className="underline" href={`${prUrl(pr.number)}/files/${scores.head}`}>Reviewed revision {scores.head.slice(0, 7)}</a>
-          <dl>{scores.grades.map(([score, evidence], index) => (
-            <div className="mt-2" key={rubric[index][0]}>
-              <dt className="font-medium">{rubric[index][0]} · {score}/10</dt>
-              <dd>{evidence}</dd>
-            </div>
-          ))}</dl>
-        </>
-      ) : <p>Awaiting code and QA review.</p>}
-      <details className="mt-2 text-xs text-muted-foreground">
-        <summary className="cursor-pointer">Scoring rubric · six equally weighted dimensions</summary>
-        {rubric.map(([name, guide]) => <p className="mt-2" key={name}><strong>{name}. </strong>{guide}</p>)}
-      </details>
-    </section>
-  );
-}
 
 const VIEWS: { label: string; who?: Who; tier?: Tier; author?: string }[] = [
   { label: "All pull requests" },
@@ -231,60 +214,6 @@ const VIEWS: { label: string; who?: Who; tier?: Tier; author?: string }[] = [
   { label: "Unvouched", who: "community", tier: "community" },
   { label: "Denounced", tier: "denounced" },
 ];
-
-type CheckView = {
-  id: string;
-  label: string;
-  key: "health" | "ci" | "cr";
-  value: string;
-  icon: ReactNode;
-};
-
-const CHECK_VIEWS: CheckView[] = [
-  {
-    id: "green",
-    label: "Green",
-    key: "health",
-    value: "green",
-    icon: <CheckCircle2Icon className="size-3.5 shrink-0 text-(--status-pass)" aria-hidden="true" />,
-  },
-  {
-    id: "needs-work",
-    label: "Needs work",
-    key: "health",
-    value: "needs-work",
-    icon: <AlertCircleIcon className="size-3.5 shrink-0 text-(--status-fail)" aria-hidden="true" />,
-  },
-  {
-    id: "ci-fail",
-    label: "CI failing",
-    key: "ci",
-    value: "fail",
-    icon: <XCircleIcon className="size-3.5 shrink-0 text-(--status-fail)" aria-hidden="true" />,
-  },
-  {
-    id: "cr-comments",
-    label: "CodeRabbit comments",
-    key: "cr",
-    value: "comments",
-    icon: <MessageSquareWarningIcon className="size-3.5 shrink-0 text-(--status-warn)" aria-hidden="true" />,
-  },
-  {
-    id: "running",
-    label: "Running",
-    key: "health",
-    value: "running",
-    icon: <ClockIcon className="size-3.5 shrink-0 text-(--status-pending)" aria-hidden="true" />,
-  },
-];
-
-/** The query after selecting a sidebar view: replaces author/tier filters, keeps everything else. */
-const withView = (q: string, v: (typeof VIEWS)[number]) =>
-  setOnly(q, ["author", "tier"], v.author ? { neg: false, key: "author", value: v.author } : v.tier ? { neg: false, key: "tier", value: v.tier } : undefined);
-
-/** The query after selecting a check view: check views are mutually exclusive, other filters are kept. */
-const withCheckView = (q: string, cv: CheckView) =>
-  setOnly(q, ["ci", "cr", "health"], { neg: false, key: cv.key, value: cv.value });
 
 /** The query after selecting a theme: replaces theme filters, keeps everything else. */
 const withTheme = (q: string, slug: string) => setOnly(q, ["theme"], { neg: false, key: "theme", value: slug });
@@ -399,7 +328,8 @@ export function App() {
   const [selected, setSelected] = useState<number | null>(initial.pr);
   const [paneTab, setPaneTab] = useState<PaneTab>(() => {
     try {
-      return localStorage.getItem(PANE_TAB_KEY) === "comments" ? "comments" : "description";
+      const stored = localStorage.getItem(PANE_TAB_KEY) as PaneTab | null;
+      return stored && PANE_TABS.includes(stored) ? stored : "description";
     } catch {
       return "description";
     }
@@ -410,6 +340,24 @@ export function App() {
       localStorage.setItem(PANE_TAB_KEY, tab);
     } catch {}
   }, []);
+  const paneTabsRef = useRef<HTMLDivElement>(null);
+  /** Switch the pane to a tab and scroll to it, or to a section inside it once rendered. */
+  const jumpTo = useCallback(
+    (tab: PaneTab, sectionId?: string) => {
+      choosePaneTab(tab);
+      let tries = 0;
+      const scroll = () => {
+        const el = (sectionId && document.getElementById(sectionId)) || (tries >= 20 || !sectionId ? paneTabsRef.current : null);
+        if (el) el.scrollIntoView({ behavior: "smooth", block: "start" });
+        else if (tries++ < 20) setTimeout(scroll, 100);
+      };
+      requestAnimationFrame(scroll);
+    },
+    [choosePaneTab],
+  );
+  const { hidden: hiddenColumns, toggle: setColumn } = useColumns();
+  const sidebar = useResizable("layout:sidebar", 240, 180, 400, "right");
+  const paneSize = useResizable("layout:pane", 560, 360, 1100, "left");
   const [collapsed, setCollapsed] = useState<ReadonlySet<string>>(new Set());
   const [palette, setPalette] = useState(false);
   const [help, setHelp] = useState(false);
@@ -549,6 +497,9 @@ export function App() {
   const paneLoading = pane !== null && !paneInLists &&
     (status === undefined || (lookupNumber !== null && bookmarked === undefined));
   const paneChecksAvailable = paneRow?.open && (historyAvailable || paneRow.ci !== undefined || paneRow.cr !== undefined);
+  // The CI tab only exists for open PRs with checks; fall back without forgetting the stored choice.
+  const activePaneTab: PaneTab = paneTab === "ci" && !paneChecksAvailable ? "description" : paneTab;
+  const paneRating = paneRow ? assess(paneRow) : undefined;
   const selectedRow = selected === pane ? paneRow ?? null : all.find((pr) => pr.number === selected) ?? null;
 
   const openPr = (n: number) => {
@@ -678,12 +629,9 @@ export function App() {
       return n;
     };
     return {
-      views: VIEWS.map((v) => count(withView(deferredQ, v))),
-      checks: Object.fromEntries(CHECK_VIEWS.map((cv) => [cv.id, count(withCheckView(deferredQ, cv))])) as Record<string, number>,
       themes: Object.fromEntries(THEMES.map((t) => [t.slug, count(withTheme(deferredQ, t.slug))])) as Record<string, number>,
       statuses: Object.fromEntries(STATUS_VIEWS.map((st) => [st.value, count(withOnly(deferredQ, "draft", st.value))])) as Record<string, number>,
       types: Object.fromEntries(sidebarTypes.map((k) => [k, count(withOnly(deferredQ, "type", k))])) as Record<string, number>,
-      opened: Object.fromEntries(RANGES.map((r) => [r.value, count(withOnly(deferredQ, "opened", r.value))])) as Record<string, number>,
     };
   }, [all, deferredQ, ctx, sidebarTypes]);
 
@@ -742,15 +690,6 @@ export function App() {
     </p>
   ) : null;
 
-  const toggleCheckView = (cv: CheckView) => {
-    setQ((cur) => {
-      if (isActive(cur, cv.key, cv.value)) {
-        return toggleToken(cur, cv.key, cv.value);
-      }
-      return withCheckView(cur, cv);
-    });
-  };
-
   const closePane = () => setPane(null);
   const renderPane = (content: ReactNode) => desktopPane ? content : (
     <Dialog open onOpenChange={(open) => { if (!open) closePane(); }}>
@@ -766,11 +705,20 @@ export function App() {
 
   return (
     <div className="flex h-dvh overflow-hidden bg-sidebar text-foreground">
-      <aside className="hidden w-60 shrink-0 flex-col md:flex">
+      <aside className="relative hidden shrink-0 flex-col md:flex" style={{ width: sidebar.width }}>
+        <div
+          role="separator"
+          aria-orientation="vertical"
+          aria-label="Resize sidebar"
+          title="Drag to resize · double-click to reset"
+          onPointerDown={sidebar.onPointerDown}
+          onDoubleClick={sidebar.reset}
+          className="absolute inset-y-0 -right-1.5 z-20 w-3 cursor-col-resize after:absolute after:inset-y-0 after:left-1/2 after:w-px after:-translate-x-1/2 after:bg-transparent hover:after:bg-ring/60"
+        />
         <div className="flex h-12 items-center gap-2 px-4">
           <span className="grid size-5 place-items-center rounded-md bg-primary text-[10px] font-semibold text-primary-foreground">T3</span>
-          <span className="text-[13px] font-[590]">t3code</span>
-          <span className="text-[13px] text-muted-foreground">Pull requests</span>
+          <h1 className="min-w-0 truncate text-[13px] font-[590]">{title}</h1>
+          <span className="ml-auto text-xs text-muted-foreground tabular-nums">{loading ? "" : fmt(filtered.length)}</span>
         </div>
         <div className="px-3 pb-3">
           <button
@@ -783,32 +731,6 @@ export function App() {
           </button>
         </div>
         <nav className="flex-1 space-y-4 overflow-y-auto px-3 pb-4" aria-label="Views">
-          <SidebarGroup label="Views" collapsed={collapsedGroups.has("Views")} onToggle={() => toggleGroup("Views")}>
-            {VIEWS.map((v, i) => (
-              <SidebarItem
-                key={v.label}
-                active={activeView === v}
-                count={sidebarCounts.views[i]}
-                onClick={() => setQ((cur) => withView(cur, v))}
-              >
-                {v.who ? <Dot who={v.who} /> : v.tier ? <span className="size-2 rounded-full border border-destructive" /> : <span className="size-2" />}
-                {v.label}
-              </SidebarItem>
-            ))}
-          </SidebarGroup>
-          <SidebarGroup label="Checks" collapsed={collapsedGroups.has("Checks")} onToggle={() => toggleGroup("Checks")}>
-            {CHECK_VIEWS.map((cv) => (
-              <SidebarItem
-                key={cv.id}
-                active={isActive(q, cv.key, cv.value)}
-                count={sidebarCounts.checks[cv.id] ?? 0}
-                onClick={() => toggleCheckView(cv)}
-              >
-                {cv.icon}
-                <span className="truncate">{cv.label}</span>
-              </SidebarItem>
-            ))}
-          </SidebarGroup>
           <SidebarGroup label="Status" collapsed={collapsedGroups.has("Status")} onToggle={() => toggleGroup("Status")}>
             {STATUS_VIEWS.map((st) => (
               <SidebarItem
@@ -854,19 +776,6 @@ export function App() {
               ))}
             </SidebarGroup>
           )}
-          <SidebarGroup label="Opened" collapsed={collapsedGroups.has("Opened")} onToggle={() => toggleGroup("Opened")}>
-            {RANGES.map((r) => (
-              <SidebarItem
-                key={r.value}
-                active={isActive(q, "opened", r.value)}
-                count={sidebarCounts.opened[r.value] ?? 0}
-                onClick={() => setQ((cur) => (isActive(cur, "opened", r.value) ? setOnly(cur, ["opened"]) : withOnly(cur, "opened", r.value)))}
-              >
-                <CalendarIcon className="size-3 text-muted-foreground" aria-hidden="true" />
-                <span className="truncate">{r.label}</span>
-              </SidebarItem>
-            ))}
-          </SidebarGroup>
         </nav>
         <div className="flex items-center gap-2 px-5 py-3 text-xs text-muted-foreground" title={status?.lastError ?? undefined}>
           <span className={cn("size-1.5 rounded-full", status?.lastError ? "bg-destructive" : "bg-(--maintainer)")} />
@@ -885,25 +794,8 @@ export function App() {
 
       <div className="flex min-w-0 flex-1 flex-col overflow-hidden bg-background md:my-2 md:mr-2 md:rounded-xl md:border md:border-border">
         <header className="flex h-11 shrink-0 items-center gap-2.5 border-b border-border px-4">
-          <h1 className="truncate text-[13px] font-[510]">{title}</h1>
-          <span className="text-xs text-muted-foreground tabular-nums">{loading ? "" : fmt(filtered.length)}</span>
-          <SegmentedControl
-            aria-label="View mode"
-            value={view}
-            onValueChange={(v) => v && setView(v as ViewMode)}
-            className="ml-1 shrink-0"
-          >
-            <SegmentedControlIndicator />
-            <SegmentedControlItem value="list">
-              <ListIcon aria-hidden="true" />
-              List
-            </SegmentedControlItem>
-            <SegmentedControlItem value="insights">
-              <BarChart3Icon aria-hidden="true" />
-              Insights
-            </SegmentedControlItem>
-          </SegmentedControl>
-          <div className="relative ml-auto hidden w-64 sm:block">
+          <h1 className="min-w-0 truncate text-[13px] font-[510] md:hidden">{title}</h1>
+          <div className="relative hidden w-full max-w-sm sm:block">
             <SearchIcon className="pointer-events-none absolute top-1/2 left-2 size-3.5 -translate-y-1/2 text-muted-foreground" aria-hidden="true" />
             <input
               ref={searchRef}
@@ -922,6 +814,22 @@ export function App() {
           <Button ref={mobileSearchRef} variant="ghost" size="icon" className="sm:hidden" aria-label="Search" onClick={() => setPalette(true)}>
             <SearchIcon />
           </Button>
+          <SegmentedControl
+            aria-label="View mode"
+            value={view}
+            onValueChange={(v) => v && setView(v as ViewMode)}
+            className="ml-auto shrink-0"
+          >
+            <SegmentedControlIndicator />
+            <SegmentedControlItem value="list">
+              <ListIcon aria-hidden="true" />
+              List
+            </SegmentedControlItem>
+            <SegmentedControlItem value="insights">
+              <BarChart3Icon aria-hidden="true" />
+              Insights
+            </SegmentedControlItem>
+          </SegmentedControl>
         </header>
 
         <nav className="flex h-10 shrink-0 items-center gap-0.5 overflow-x-auto border-b border-border px-3" aria-label="Pull request state">
@@ -973,7 +881,7 @@ export function App() {
               </Button>
             )}
             <div ref={displayRef} className="contents">
-              <DisplayMenu view={view} setView={setView} groups={groupChoices} group={group} setGroup={setGroup} sort={sort} setSort={setSort} />
+              <DisplayMenu view={view} setView={setView} groups={groupChoices} group={group} setGroup={setGroup} sort={sort} setSort={setSort} hiddenColumns={hiddenColumns} setColumn={setColumn} />
             </div>
           </div>
         </div>
@@ -1052,6 +960,7 @@ export function App() {
                             selected={pr.number === selected}
                             showTheme={group !== "theme"}
                             now={now}
+                            hidden={hiddenColumns}
                             onOpen={openPr}
                           />
                         ))}
@@ -1069,9 +978,19 @@ export function App() {
           )}
 
           {pane && renderPane(
+            <div className="relative flex min-w-0 flex-1 md:w-(--pane-w) md:max-w-[calc(100%-320px)] md:flex-none" style={{ "--pane-w": `${paneSize.width}px` } as React.CSSProperties}>
+            <div
+              role="separator"
+              aria-orientation="vertical"
+              aria-label="Resize pull request pane"
+              title="Drag to resize · double-click to reset"
+              onPointerDown={paneSize.onPointerDown}
+              onDoubleClick={paneSize.reset}
+              className="absolute inset-y-0 -left-1.5 z-20 hidden w-3 cursor-col-resize after:absolute after:inset-y-0 after:left-1/2 after:w-px after:-translate-x-1/2 hover:after:bg-ring/60 md:block"
+            />
             <aside
               aria-label="Pull request"
-              className="min-w-0 flex-1 overflow-y-auto bg-background px-6 pt-3 pb-10 md:w-[min(560px,45vw)] md:flex-none md:border-l md:border-border"
+              className="min-w-0 flex-1 overflow-y-auto bg-background px-6 pt-3 pb-10 md:border-l md:border-border"
             >
               {paneRow ? (
                 <>
@@ -1104,22 +1023,14 @@ export function App() {
                       <>
                         <dt className="text-muted-foreground">CI</dt>
                         <dd className="flex items-center gap-2">
-                          <button
-                            className="inline-flex cursor-default items-center gap-2 hover:underline"
-                            onClick={() => setQ((cur) => toggleToken(cur, "ci", ciOf(paneRow)))}
-                          >
-                            <CiBadge pr={paneRow} />
-                            <span className="text-xs text-muted-foreground">{ciSummaryText(paneRow)}</span>
+                          <button className="cursor-pointer text-left text-xs text-muted-foreground hover:text-foreground hover:underline" onClick={() => jumpTo("ci", "pane-ci")}>
+                            {ciSummaryText(paneRow)}
                           </button>
                         </dd>
                         <dt className="text-muted-foreground">CodeRabbit</dt>
                         <dd className="flex items-center gap-2">
-                          <button
-                            className="inline-flex cursor-default items-center gap-2 hover:underline"
-                            onClick={() => setQ((cur) => toggleToken(cur, "cr", crOf(paneRow)))}
-                          >
-                            <CrBadge pr={paneRow} />
-                            <span className="text-xs text-muted-foreground">{crSummaryText(paneRow)}</span>
+                          <button className="cursor-pointer text-left text-xs text-muted-foreground hover:text-foreground hover:underline" onClick={() => jumpTo("ci", "pane-coderabbit")}>
+                            {crSummaryText(paneRow)}
                           </button>
                         </dd>
                       </>
@@ -1177,35 +1088,47 @@ export function App() {
                       <span className="text-(--maintainer)">+{fmt(paneRow.additions)}</span> <span className="text-destructive/80">−{fmt(paneRow.deletions)}</span>
                     </dd>
                   </dl>
-                  <Assessment pr={paneRow} />
-                  {paneRow.open && paneChecksAvailable && <ChecksPanel pr={paneRow} />}
-                  {paneRow.open && (
+                  <div ref={paneTabsRef} className="scroll-mt-3">
                     <SegmentedControl
                       aria-label="Pull request content"
-                      value={paneTab}
+                      value={activePaneTab}
                       onValueChange={(v) => v && choosePaneTab(v as PaneTab)}
-                      className="mb-5 grid w-full grid-cols-2"
+                      className={cn("mb-5 grid w-full", paneChecksAvailable ? "grid-cols-4" : "grid-cols-3")}
                     >
                       <SegmentedControlIndicator />
                       <SegmentedControlItem value="description">
                         <FileTextIcon aria-hidden="true" />
                         Description
                       </SegmentedControlItem>
+                      <SegmentedControlItem value="review">
+                        <GaugeIcon aria-hidden="true" />
+                        Review
+                        {paneRating && (
+                          <span className={cn("rounded-full px-1.5 text-[10px] font-semibold tabular-nums", scoreTone(paneRating.total))}>{paneRating.total}</span>
+                        )}
+                      </SegmentedControlItem>
                       <SegmentedControlItem value="comments">
                         <MessageSquareIcon aria-hidden="true" />
                         Comments
-                        <Kbd className="ml-1 h-4 min-w-4 px-1 text-[10px]">C</Kbd>
+                        <Kbd className="ml-1 hidden h-4 min-w-4 px-1 text-[10px] lg:inline-flex">C</Kbd>
                       </SegmentedControlItem>
+                      {paneChecksAvailable && (
+                        <SegmentedControlItem value="ci">
+                          <ActivityIcon aria-hidden="true" />
+                          CI
+                        </SegmentedControlItem>
+                      )}
                     </SegmentedControl>
-                  )}
+                  </div>
                   <Suspense fallback={<p className="text-[13px] text-muted-foreground">Loading…</p>}>
-                    {paneRow.open && paneTab === "description" ? (
+                    {activePaneTab === "description" ? (
                       <Description number={paneRow.number} />
+                    ) : activePaneTab === "review" ? (
+                      <ReviewPanel pr={paneRow} />
+                    ) : activePaneTab === "ci" ? (
+                      <ChecksPanel pr={paneRow} />
                     ) : (
-                      <>
-                        {!paneRow.open && <h3 className="mb-3 text-xs font-medium text-muted-foreground">Comments</h3>}
-                        <Comments key={paneRow.number} number={paneRow.number} updatedAt={paneRow.updatedAt} />
-                      </>
+                      <Comments key={paneRow.number} number={paneRow.number} updatedAt={paneRow.updatedAt} />
                     )}
                   </Suspense>
                 </>
@@ -1215,7 +1138,8 @@ export function App() {
                   <button className="underline" onClick={closePane}>Close</button>
                 </p>
               )}
-            </aside>,
+            </aside>
+            </div>,
           )}
         </div>
       </div>

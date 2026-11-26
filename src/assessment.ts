@@ -1,3 +1,5 @@
+import weeklyScores from "./weekly-review-scores.json";
+
 export const rubric = [
   ["Reach", "Estimate the share of active users who encounter the affected path. 1 means an exceptional configuration, 5 a recurring workflow for a subset, 10 virtually every user. Identify the denominator and disclose missing telemetry."],
   ["Benefit", "Judge severity, frequency, and cost of the workaround for an affected user. 1 is cosmetic, 5 removes repeated friction, 10 restores essential work or prevents irreversible loss."],
@@ -8,8 +10,8 @@ export const rubric = [
 ] as const;
 
 type Grade = [score: number, evidence: string];
-type Review = { head: string; grades: [Grade, Grade, Grade, Grade, Grade, Grade] };
-const reviews: Record<number, Review> = {
+export type Review = { head: string; base?: string; excerpted?: boolean; grades: [Grade, Grade, Grade, Grade, Grade, Grade] };
+export const reviews: Record<number, Review> = {
   43554: {
     head: "ea5019e933ffd82c90e14fa6c98103a09657787a",
     grades: [
@@ -55,7 +57,23 @@ const reviews: Record<number, Review> = {
     ],
   },
 };
+
+const scoredReviews = new Map(
+  Object.entries(reviews).map(([number, review]) => [
+    Number(number),
+    { ...review, total: review.grades.reduce((sum, [score]) => sum + score, 0) },
+  ]),
+);
+
+const scores: Record<number, { head: string; total: number }> = weeklyScores;
+
 export function assess(pr: { number: number }) {
-  const review = reviews[pr.number];
-  return review && { ...review, total: review.grades.reduce((sum, [score]) => sum + score, 0) };
+  return scores[pr.number] ?? scoredReviews.get(pr.number);
+}
+
+/** Text and background classes for a review total out of 60. */
+export function scoreTone(total: number) {
+  if (total >= 40) return "bg-(--status-pass-bg) text-(--status-pass)";
+  if (total >= 32) return "bg-(--status-warn-bg) text-(--status-warn)";
+  return "bg-(--status-fail-bg) text-(--status-fail)";
 }

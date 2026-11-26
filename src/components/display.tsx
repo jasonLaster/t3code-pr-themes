@@ -2,9 +2,11 @@ import { BarChart3Icon, ListIcon, SlidersHorizontalIcon } from "lucide-react";
 import { buttonVariants } from "@/components/ui/button";
 import { Popover, PopoverContent, PopoverTitle, PopoverTrigger } from "@/components/ui/popover";
 import { SegmentedControl, SegmentedControlIndicator, SegmentedControlItem } from "@/components/ui/segmented-control";
+import { Switch } from "@/components/ui/switch";
 import { Select, SelectContent, SelectItem, SelectLabel, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { cn } from "@/lib/utils";
 import type { GroupOption } from "@/fields";
+import { COLUMNS, type Column } from "@/lib/layout";
 import { SORT_LABEL, type SortBy, type ViewMode } from "@/model";
 
 type Props = {
@@ -15,6 +17,8 @@ type Props = {
   setGroup: (g: string) => void;
   sort: SortBy;
   setSort: (s: SortBy) => void;
+  hiddenColumns: ReadonlySet<Column>;
+  setColumn: (c: Column, visible: boolean) => void;
 };
 
 const sortItems = (Object.keys(SORT_LABEL) as SortBy[]).map((value) => ({ value, label: SORT_LABEL[value] }));
@@ -28,7 +32,7 @@ function Row({ label, children }: { label: string; children: React.ReactNode }) 
   );
 }
 
-export function DisplayMenu({ view, setView, groups, group, setGroup, sort, setSort }: Props) {
+export function DisplayMenu({ view, setView, groups, group, setGroup, sort, setSort, hiddenColumns, setColumn }: Props) {
   const groupItems = groups.map(({ value, label }) => ({ value, label }));
   return (
     <Popover>
@@ -84,6 +88,15 @@ export function DisplayMenu({ view, setView, groups, group, setGroup, sort, setS
             </SelectContent>
           </Select>
         </Row>
+        <fieldset className="space-y-1.5 border-t border-border pt-3">
+          <legend className="mb-1.5 text-xs text-muted-foreground">List columns · saved in this browser</legend>
+          {COLUMNS.map((c) => (
+            <label key={c.key} className="flex cursor-pointer items-center justify-between gap-3">
+              {c.label}
+              <Switch checked={!hiddenColumns.has(c.key)} onCheckedChange={(on) => setColumn(c.key, on)} />
+            </label>
+          ))}
+        </fieldset>
       </PopoverContent>
     </Popover>
   );

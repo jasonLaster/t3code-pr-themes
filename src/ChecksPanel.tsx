@@ -4,61 +4,35 @@ import { useEffect, useState } from "react";
 import { api } from "../convex/_generated/api";
 import { RabbitIcon } from "@/components/status";
 import { cn } from "@/lib/utils";
-import { ciOf } from "@/model";
 import type { Pr } from "@/sync";
 
 export function ChecksPanel({ pr }: { pr: Pr }) {
   const details = useQuery(api.prs.details, { number: pr.number });
   const ensureDetails = useMutation(api.prs.ensureDetails);
   const [showAllChecks, setShowAllChecks] = useState(false);
-  const [requested, setRequested] = useState(false);
 
-  const ci = ciOf(pr);
-  const needsAutoLoad =
-    ci === "fail" ||
-    ci === "pending" ||
-    pr.cr === "comments" ||
-    pr.cr === "error" ||
-    pr.cr === undefined ||
-    (pr.crUnresolved ?? 0) > 0;
+  useEffect(() => setShowAllChecks(false), [pr.number]);
 
+  // The panel only mounts in the CI tab, so opening the tab is the request to load details.
   useEffect(() => {
-    setShowAllChecks(false);
-    setRequested(false);
-  }, [pr.number]);
-
-  useEffect(() => {
-    if (!needsAutoLoad && !requested) return;
     void ensureDetails({ number: pr.number });
-  }, [ensureDetails, needsAutoLoad, pr.number, pr.updatedAt, requested]);
+  }, [ensureDetails, pr.number, pr.updatedAt]);
 
   const activeChecks = details?.checks.filter((c) => c.state === "fail" || c.state === "pending") ?? [];
   const otherChecks = details?.checks.filter((c) => c.state === "pass" || c.state === "skipped") ?? [];
   const crThreads = details?.crThreads ?? [];
 
-  if (!needsAutoLoad && !requested && !details) {
-    if (ci === "none" && (!pr.cr || pr.cr === "none")) return null;
-    return (
-      <div className="mb-5 border-b border-border pb-4">
-        <button
-          onClick={() => setRequested(true)}
-          className="inline-flex cursor-default items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground"
-        >
-          <ChevronDownIcon className="size-3.5" aria-hidden="true" />
-          Inspect CI checks
-        </button>
-      </div>
-    );
-  }
-
-  const loading = details === undefined || (details === null && (needsAutoLoad || requested));
+  const loading = details == null;
 
   return (
-    <section className="mb-6 space-y-4 border-b border-border pb-5 text-[13px]" aria-label="Checks and CodeRabbit">
+    <section id="pane-ci" className="scroll-mt-4 space-y-4 text-[13px]" aria-label="Checks and CodeRabbit">
       {loading ? (
         <p className="text-xs text-muted-foreground">Loading CI checks and CodeRabbit comments…</p>
       ) : (
         <>
+          {activeChecks.length === 0 && crThreads.length === 0 && otherChecks.length === 0 && (
+            <p className="text-xs text-muted-foreground">No CI checks or CodeRabbit comments.</p>
+          )}
           {activeChecks.length > 0 && (
             <div className="space-y-1.5">
               <div className="flex items-center justify-between text-xs font-medium text-muted-foreground">
@@ -109,7 +83,7 @@ export function ChecksPanel({ pr }: { pr: Pr }) {
           )}
 
           {crThreads.length > 0 && (
-            <div className="space-y-1.5">
+            <div id="pane-coderabbit" className="scroll-mt-4 space-y-1.5">
               <div className="flex items-center gap-1.5 text-xs font-medium text-muted-foreground">
                 <RabbitIcon className="size-3.5 text-(--status-warn)" />
                 <span>Unresolved CodeRabbit comments ({crThreads.length})</span>
