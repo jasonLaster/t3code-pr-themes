@@ -7,7 +7,6 @@ import {
   CheckCircle2Icon,
   ChevronDownIcon,
   CircleDashedIcon,
-  CircleDotIcon,
   ClockIcon,
   FileTextIcon,
   GitPullRequestDraftIcon,
@@ -18,25 +17,19 @@ import {
   MessageSquareWarningIcon,
   SearchIcon,
   ShapesIcon,
-  ShieldCheckIcon,
   TagIcon,
-  UserIcon,
   XCircleIcon,
   XIcon,
 } from "lucide-react";
 import { lazy, memo, Suspense, useCallback, useDeferredValue, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { api } from "../convex/_generated/api";
-import { PR_LABELS, PR_STATES } from "../shared/history";
 import { ChecksPanel } from "@/ChecksPanel";
 import { CommandPalette } from "@/components/command-palette";
 import { DisplayMenu } from "@/components/display";
 import { FilterChips, FilterMenu, type Facet } from "@/components/filters";
 import {
   CiBadge,
-  CiStatusIcon,
   CrBadge,
-  CrStatusIcon,
-  HealthDot,
   RabbitIcon,
   ciSummaryText,
   crSummaryText,
@@ -46,47 +39,23 @@ import { Dialog, DialogBackdrop, DialogContent, DialogTitle } from "@/components
 import { Badge, Kbd } from "@/components/ui/kbd";
 import { SegmentedControl, SegmentedControlIndicator, SegmentedControlItem } from "@/components/ui/segmented-control";
 import { cn } from "@/lib/utils";
+import { Avatar, Dot, STATE_LABEL, TierBadge, aliasOf } from "@/components/people";
+import { DATE_RANGES, FIELDS, filterOptions, groupOptions, groupPrs, isGroupKey, type Ctx, type Group } from "@/fields";
 import {
-  ALIASES,
-  CI_LABEL,
-  CI_STATUSES,
-  CR_LABEL,
-  CR_STATUSES,
-  GROUP_LABEL,
-  HEALTH_LABEL,
-  HEALTH_ORDER,
   MEASURE_LABEL,
-  RANGES,
   SEGMENT_LABEL,
   SLICE_LABEL,
   SORTERS,
   SORT_LABEL,
   THEMES,
-  TIERS,
-  WHO,
-  WHO_LABEL,
-  applyInsightDrillDown,
-  applyWhoFilter,
   ciOf,
   crOf,
   groupToSlice,
-  healthOf,
-  isActive,
-  makeMatcher,
-  parseQuery,
-  requestedStates,
-  serialize,
-  setOnly,
   stateOf,
   themeSlug,
   tierOf,
-  toggleToken,
   whoOf,
-  type CiStatus,
   type Contributors,
-  type CrStatus,
-  type FilterKey,
-  type GroupBy,
   type Measure,
   type SegmentBy,
   type SliceBy,
@@ -95,6 +64,18 @@ import {
   type ViewMode,
   type Who,
 } from "@/model";
+import {
+  applyInsightDrillDown,
+  applyWhoFilter,
+  isActive,
+  makeMatcher,
+  parseQuery,
+  requestedStates,
+  serialize,
+  setOnly,
+  toggleToken,
+  type FilterKey,
+} from "@/query";
 import { isHistorical, useHistory, useRevalidateOnView, useSyncedPrs, type Pr } from "@/sync";
 
 // The markdown stack and insights charts are loaded on demand to keep the initial bundle lean.
@@ -106,10 +87,8 @@ const InsightsView = lazy(() => import("@/components/insights").then((m) => ({ d
 
 const prUrl = (n: number) => `https://github.com/pingdotgg/t3code/pull/${n}`;
 const fmt = (n: number) => n.toLocaleString();
-const STATE_LABEL = { open: "Open", merged: "Merged", closed: "Closed" } as const;
+const RANGES = DATE_RANGES.filter(([v]) => !v.startsWith(">")).map(([value, label]) => ({ value, label }));
 const HISTORY_ROW_PAGE = 200;
-const TIER_LABEL: Record<Tier, string> = { maintainer: "Maintainer", vouched: "Vouched", community: "Unvouched", denounced: "Denounced" };
-const aliasOf = (login: string) => Object.entries(ALIASES).find(([, l]) => l === login.toLowerCase())?.[0];
 
 function ago(ms: number, now: number) {
   const s = Math.max(0, (now - ms) / 1000);
@@ -131,7 +110,7 @@ function useNow() {
 
 function readUrl() {
   const p = new URLSearchParams(location.search);
-  const group = p.get("group") as GroupBy | null;
+  const group = p.get("group");
   const sort = p.get("sort") as SortBy | null;
   const view = p.get("view");
   const measure = p.get("measure") as Measure | null;
@@ -140,7 +119,7 @@ function readUrl() {
   const pr = Number(p.get("pr"));
   return {
     q: p.get("q") ?? "",
-    group: group && group in GROUP_LABEL ? group : ("theme" as GroupBy),
+    group: group && isGroupKey(group) ? group : "theme",
     sort: sort && sort in SORT_LABEL ? sort : ("created" as SortBy),
     view: (view === "insights" ? "insights" : "list") as ViewMode,
     measure: measure && measure in MEASURE_LABEL ? measure : ("count" as Measure),
@@ -148,36 +127,6 @@ function readUrl() {
     segment: segment && segment in SEGMENT_LABEL ? segment : ("who" as SegmentBy),
     pr: Number.isFinite(pr) && pr > 0 ? pr : null,
   };
-}
-
-function Dot({ who, className }: { who: Who; className?: string }) {
-  return <span aria-hidden="true" className={cn("inline-block size-2 shrink-0 rounded-full", className)} style={{ background: `var(--${who})` }} />;
-}
-
-function Avatar({ login, className }: { login: string; className?: string }) {
-  return (
-    <img
-      alt=""
-      loading="lazy"
-      src={`https://avatars.githubusercontent.com/${encodeURIComponent(login)}?s=40`}
-      className={cn("size-4 shrink-0 rounded-full bg-muted", className)}
-    />
-  );
-}
-
-function TierBadge({ tier }: { tier: Tier }) {
-  if (tier === "community") return null;
-  return (
-    <Badge
-      className={cn(
-        tier === "maintainer" && "text-(--maintainer)",
-        tier === "vouched" && "text-(--vouched)",
-        tier === "denounced" && "border-destructive/50 text-destructive",
-      )}
-    >
-      {TIER_LABEL[tier]}
-    </Badge>
-  );
 }
 
 type RowProps = { pr: Pr; who: Who; tier: Tier; selected: boolean; showTheme: boolean; now: number; onOpen: (n: number) => void };
@@ -363,7 +312,7 @@ export function App() {
   const initial = useMemo(readUrl, []);
   const [q, setQ] = useState(initial.q);
   const [draft, setDraft] = useState(() => parseQuery(initial.q).words.join(" "));
-  const [group, setGroup] = useState<GroupBy>(initial.group);
+  const [group, setGroup] = useState<string>(initial.group);
   const [sort, setSort] = useState<SortBy>(initial.sort);
   const [view, setView] = useState<ViewMode>(initial.view);
   const [measure, setMeasure] = useState<Measure>(initial.measure);
@@ -469,59 +418,26 @@ export function App() {
     setDraft("");
   };
 
-  const filtered = useMemo(() => {
-    const match = makeMatcher(deferredQ, contributors, asOf);
-    return all.filter(match).sort(SORTERS[sort]);
-  }, [all, deferredQ, contributors, asOf, sort]);
-
-  const groups = useMemo(() => {
-    const keyOf: Record<GroupBy, (pr: Pr) => string> = {
-      theme: (pr) => pr.theme,
-      health: (pr) => HEALTH_LABEL[healthOf(pr)],
-      ci: (pr) => CI_LABEL[ciOf(pr)],
-      cr: (pr) => CR_LABEL[crOf(pr)],
-      who: (pr) => WHO_LABEL[whoOf(pr.author, contributors)],
-      author: (pr) => pr.author,
-      none: () => "All",
-    };
-    const map = new Map<string, Pr[]>();
-    for (const pr of filtered) {
-      const k = keyOf[group](pr);
-      const list = map.get(k);
-      if (list) list.push(pr);
-      else map.set(k, [pr]);
-    }
-    const entries = [...map];
-    if (group === "who") {
-      const order = WHO.map((w) => WHO_LABEL[w]);
-      entries.sort((a, b) => order.indexOf(a[0]) - order.indexOf(b[0]));
-    } else if (group === "health") {
-      const order = HEALTH_ORDER.map((h) => HEALTH_LABEL[h]);
-      entries.sort((a, b) => order.indexOf(a[0]) - order.indexOf(b[0]));
-    } else if (group === "ci") {
-      const order = CI_STATUSES.map((s) => CI_LABEL[s]);
-      entries.sort((a, b) => order.indexOf(a[0]) - order.indexOf(b[0]));
-    } else if (group === "cr") {
-      const order = CR_STATUSES.map((s) => CR_LABEL[s]);
-      entries.sort((a, b) => order.indexOf(a[0]) - order.indexOf(b[0]));
-    } else {
-      entries.sort((a, b) => Number(a[0] === "Other") - Number(b[0] === "Other") || b[1].length - a[1].length);
-    }
-    return entries;
-  }, [filtered, group, contributors]);
+  const ctx: Ctx = useMemo(() => ({ contributors, now: asOf }), [contributors, asOf]);
+  const filtered = useMemo(() => all.filter(makeMatcher(deferredQ, ctx)).sort(SORTERS[sort]), [all, deferredQ, ctx, sort]);
+  const groups = useMemo(() => groupPrs(group, filtered, ctx), [filtered, group, ctx]);
+  const groupId = (g: Group) => `${group}:${g.value}`;
 
   const visibleGroups = useMemo(() => {
     if (!showHistory) return groups;
     let remaining = historyLimit;
-    return groups.flatMap(([key, list]): [string, Pr[]][] => {
+    return groups.flatMap((g): Group[] => {
       if (remaining <= 0) return [];
-      if (collapsed.has(key)) return [[key, list]];
-      const visibleRows = list.slice(0, remaining);
-      remaining -= visibleRows.length;
-      return [[key, visibleRows]];
+      if (collapsed.has(`${group}:${g.value}`)) return [g];
+      const prs = g.prs.slice(0, remaining);
+      remaining -= prs.length;
+      return [{ ...g, prs }];
     });
-  }, [groups, showHistory, historyLimit, collapsed]);
-  const visible = useMemo(() => visibleGroups.flatMap(([key, list]) => collapsed.has(key) ? [] : list), [visibleGroups, collapsed]);
+  }, [groups, group, showHistory, historyLimit, collapsed]);
+  const visible = useMemo(
+    () => visibleGroups.flatMap((g) => (collapsed.has(`${group}:${g.value}`) ? [] : g.prs)),
+    [visibleGroups, group, collapsed],
+  );
   const paneRow = pane ? all.find((pr) => pr.number === pane) : undefined;
   const paneChecksAvailable = paneRow?.open && (historyAvailable || paneRow.ci !== undefined || paneRow.cr !== undefined);
   const selectedRow = selected ? all.find((pr) => pr.number === selected) ?? null : null;
@@ -607,133 +523,27 @@ export function App() {
     // Like Linear, a property's counts respect every other active filter (and search words) but not
     // its own, so each number is what picking that value would show. Options come from all PRs so
     // a value never disappears from the menu just because the current filters hide it.
-    const scopedMatch = (key: FilterKey) => makeMatcher(setOnly(deferredQ, [key]), contributors, asOf);
-    const scoped = (key: FilterKey) => all.filter(scopedMatch(key));
-    const countBy = (prs: Pr[], fn: (pr: Pr) => string, options: Iterable<string> = []) => {
-      const m = new Map<string, number>([...options].map((o) => [o, 0]));
-      for (const pr of prs) m.set(fn(pr), (m.get(fn(pr)) ?? 0) + 1);
-      return m;
-    };
-    const byCount = (m: Map<string, number>) => [...m].sort((a, b) => b[1] - a[1]);
-    const authors = byCount(countBy(scoped("author"), (pr) => pr.author, new Set(all.map((pr) => pr.author))));
-    const tiers = countBy(scoped("tier"), (pr) => tierOf(pr.author, contributors));
-    const themes = countBy(scoped("theme"), (pr) => pr.theme);
-    const kinds = byCount(countBy(scoped("type"), (pr) => pr.kind || "other", new Set(all.map((pr) => pr.kind || "other"))));
-    const stateCounts = countBy(scoped("state"), stateOf);
+    const scopedMatch = (key: FilterKey) => makeMatcher(setOnly(deferredQ, [key]), ctx);
     // Open PRs are always synced, so their count is exact even while viewing merged/closed history.
-    const openMatch = scopedMatch("state");
-    const openCount = rows ? [...rows.values()].filter(openMatch).length : undefined;
-    const labels = new Map<string, number>();
-    for (const pr of scoped("label")) {
-      if ("labels" in pr) for (const label of pr.labels) labels.set(label, (labels.get(label) ?? 0) + 1);
-    }
-    // Check status only exists for open PRs.
-    const ciCounts = countBy(scoped("ci").filter((pr) => pr.open), ciOf);
-    const crCounts = countBy(scoped("cr").filter((pr) => pr.open), crOf);
-    const hasCrError = all.some((pr) => pr.open && crOf(pr) === "error");
-    const isScoped = scoped("is");
-    const healthCounts = countBy(isScoped.filter((pr) => pr.open), healthOf);
-    const drafts = isScoped.filter((pr) => pr.draft).length;
-    const openedScoped = scoped("opened");
-    const tierWho: Record<Tier, Who> = { maintainer: "maintainer", vouched: "vouched", community: "community", denounced: "community" };
-    const options: Facet[] = [
-      {
-        key: "state",
-        label: "State",
-        plural: "states",
-        icon: CircleDotIcon,
-        values: PR_STATES.map((state) => ({
-          value: state, label: STATE_LABEL[state],
-          count: state === "open" ? openCount : states.includes(state) && !historyLoading ? stateCounts.get(state) ?? 0 : undefined,
-        })),
-      },
-      {
-        key: "label",
-        label: "Label",
-        plural: "labels",
-        icon: TagIcon,
-        values: PR_LABELS.map((label) => ({ value: label, label, count: labels.get(label) })),
-      },
-      {
-        key: "ci",
-        label: "CI",
-        plural: "CI states",
-        icon: CheckCircle2Icon,
-        values: CI_STATUSES.map((s) => ({
-          value: s,
-          label: CI_LABEL[s],
-          count: ciCounts.get(s) ?? 0,
-          leading: <CiStatusIcon status={s} />,
-        })),
-      },
-      {
-        key: "cr",
-        label: "CodeRabbit",
-        plural: "CodeRabbit states",
-        icon: MessageSquareWarningIcon,
-        values: CR_STATUSES.filter((s) => s !== "error" || hasCrError).map((s) => ({
-          value: s,
-          label: CR_LABEL[s],
-          count: crCounts.get(s) ?? 0,
-          leading: <CrStatusIcon status={s} />,
-        })),
-      },
-      {
-        key: "is",
-        label: "Status",
-        plural: "statuses",
-        icon: CircleDashedIcon,
-        values: [
-          { value: "green", label: "Green", count: healthCounts.get("green") ?? 0, leading: <HealthDot health="green" /> },
-          { value: "needs-work", label: "Needs work", count: healthCounts.get("needs-work") ?? 0, leading: <HealthDot health="needs-work" /> },
-          { value: "running", label: "Running", count: healthCounts.get("running") ?? 0, leading: <HealthDot health="running" /> },
-          { value: "ready", label: "Ready for review", count: isScoped.length - drafts },
-          { value: "draft", label: "Draft", count: drafts },
-        ],
-      },
-      {
-        key: "author",
-        label: "Author",
-        plural: "authors",
-        icon: UserIcon,
-        values: authors.map(([login, count]) => ({ value: aliasOf(login) ?? login.toLowerCase(), label: login, count, leading: <Avatar login={login} /> })),
-      },
-      {
-        key: "tier",
-        label: "Contributor",
-        plural: "tiers",
-        icon: ShieldCheckIcon,
-        values: TIERS.map((t) => ({ value: t, label: TIER_LABEL[t], count: tiers.get(t) ?? 0, leading: <Dot who={tierWho[t]} /> })),
-      },
-      {
-        key: "theme",
-        label: "Theme",
-        plural: "themes",
-        icon: TagIcon,
-        values: THEMES.map((t) => ({ value: t.slug, label: t.name, count: themes.get(t.name) ?? 0 })),
-      },
-      {
-        key: "type",
-        label: "Type",
-        plural: "types",
-        icon: ShapesIcon,
-        values: kinds.map(([k, count]) => ({ value: k, label: k, count })),
-      },
-      {
-        key: "opened",
-        label: "Opened",
-        plural: "ranges",
-        icon: CalendarIcon,
-        single: true,
-        values: RANGES.map((r) => ({
-          value: r.value,
-          label: r.label,
-          count: openedScoped.filter((pr) => Date.parse(pr.createdAt) >= asOf - Number.parseInt(r.value) * 864e5).length,
-        })),
-      },
-    ];
-    return historyAvailable ? options : options.filter(({ key }) => key !== "state" && key !== "label");
-  }, [all, deferredQ, contributors, asOf, states, rows, historyLoading, historyAvailable]);
+    const openCount = rows ? [...rows.values()].filter(scopedMatch("state")).length : undefined;
+    return FIELDS.filter((f) => f.filterValues !== false && (historyAvailable || !f.history)).map((f) => {
+      let values = filterOptions(f, all, ctx, all.filter(scopedMatch(f.key))).map((o) => ({
+        value: o.value,
+        label: o.label,
+        count: o.count,
+        leading: o.leading,
+      }));
+      // History is only fetched once asked for, so its counts are unknown until then.
+      if (f.key === "state") {
+        values = values.map((v) => ({
+          ...v,
+          count: v.value === "open" ? openCount : states.includes(v.value as "merged" | "closed") && !historyLoading ? v.count : undefined,
+        }));
+      }
+      return { key: f.key, label: f.label, plural: f.plural, icon: f.icon, single: f.single, formatValue: f.formatValue, values };
+    });
+  }, [all, deferredQ, ctx, states, rows, historyLoading, historyAvailable]);
+  const groupChoices = useMemo(() => groupOptions(historyAvailable), [historyAvailable]);
 
   const { tokens } = parseQuery(q);
   const people = tokens.filter((t) => t.key === "author" || t.key === "tier");
@@ -750,7 +560,7 @@ export function App() {
   }, [all]);
   const sidebarCounts = useMemo(() => {
     const count = (query: string) => {
-      const match = makeMatcher(query, contributors, asOf);
+      const match = makeMatcher(query, ctx);
       let n = 0;
       for (const pr of all) if (match(pr)) n++;
       return n;
@@ -763,7 +573,7 @@ export function App() {
       types: Object.fromEntries(sidebarTypes.map((k) => [k, count(withOnly(deferredQ, "type", k))])) as Record<string, number>,
       opened: Object.fromEntries(RANGES.map((r) => [r.value, count(withOnly(deferredQ, "opened", r.value))])) as Record<string, number>,
     };
-  }, [all, deferredQ, contributors, asOf, sidebarTypes]);
+  }, [all, deferredQ, ctx, sidebarTypes]);
 
   const drillDown = (slice: SliceBy, filterValue: string, who?: Who) => {
     setQ((cur) => applyInsightDrillDown(cur, slice, filterValue, who));
@@ -988,7 +798,7 @@ export function App() {
               </Button>
             )}
             <div ref={displayRef} className="contents">
-              <DisplayMenu view={view} setView={setView} group={group} setGroup={setGroup} sort={sort} setSort={setSort} />
+              <DisplayMenu view={view} setView={setView} groups={groupChoices} group={group} setGroup={setGroup} sort={sort} setSort={setSort} />
             </div>
           </div>
         </div>
@@ -1035,36 +845,30 @@ export function App() {
                   <Button size="sm" onClick={clearAll}>Clear filters</Button>
                 </div>
               ) : (
-                visibleGroups.map(([key, list]) => {
-                  const healthKey = group === "health" ? HEALTH_ORDER.find((h) => HEALTH_LABEL[h] === key) : undefined;
-                  const ciKey = group === "ci" ? CI_STATUSES.find((s) => CI_LABEL[s] === key) : undefined;
-                  const crKey = group === "cr" ? CR_STATUSES.find((s) => CR_LABEL[s] === key) : undefined;
+                visibleGroups.map((g) => {
+                  const id = groupId(g);
+                  const total = groups.find((x) => x.value === g.value)?.prs.length ?? g.prs.length;
                   return (
-                    <section key={key}>
+                    <section key={id}>
                       <button
-                        aria-expanded={!collapsed.has(key)}
+                        aria-expanded={!collapsed.has(id)}
                         onClick={() =>
                           setCollapsed((cur) => {
                             const next = new Set(cur);
-                            if (!next.delete(key)) next.add(key);
+                            if (!next.delete(id)) next.add(id);
                             return next;
                           })
                         }
                         className="group sticky top-0 z-10 flex h-9 w-full cursor-default items-center gap-2 bg-group px-6 text-left text-[13px]"
                       >
                         <span className="-ml-3 w-2 text-muted-foreground transition-transform group-aria-expanded:rotate-90">›</span>
-                        {group === "author" && <Avatar login={key} />}
-                        {group === "who" && <Dot who={WHO.find((w) => WHO_LABEL[w] === key) ?? "community"} />}
-                        {group === "theme" && <TagIcon className="size-3.5 text-muted-foreground" aria-hidden="true" />}
-                        {healthKey && <HealthDot health={healthKey} />}
-                        {ciKey && <CiStatusIcon status={ciKey as CiStatus} />}
-                        {crKey && <CrStatusIcon status={crKey as CrStatus} />}
-                        <span className="font-[510]">{key}</span>
-                        {group === "author" && <TierBadge tier={tierOf(key, contributors)} />}
-                        <span className="text-muted-foreground tabular-nums">{fmt(groups.find(([name]) => name === key)?.[1].length ?? list.length)}</span>
+                        {g.leading}
+                        <span className="font-[510]">{g.label}</span>
+                        {g.trailing}
+                        <span className="text-muted-foreground tabular-nums">{fmt(total)}</span>
                       </button>
-                      {!collapsed.has(key) &&
-                        list.map((pr) => (
+                      {!collapsed.has(id) &&
+                        g.prs.map((pr) => (
                           <Row
                             key={pr.number}
                             pr={pr}
@@ -1080,8 +884,8 @@ export function App() {
                   );
                 })
               )}
-              {showHistory && !loading && visible.length < groups.reduce((sum, [key, list]) =>
-                sum + (collapsed.has(key) ? 0 : list.length), 0) && (
+              {showHistory && !loading && visible.length < groups.reduce((sum, g) =>
+                sum + (collapsed.has(groupId(g)) ? 0 : g.prs.length), 0) && (
                 <Button variant="ghost" size="sm" className="m-4" onClick={() => setHistoryLimit((limit) => limit + HISTORY_ROW_PAGE)}>
                   Show more pull requests
                 </Button>
@@ -1232,6 +1036,7 @@ export function App() {
         setQ={setQ}
         view={view}
         setView={setView}
+        groups={groupChoices}
         setGroup={setGroup}
         setSort={setSort}
         setMeasure={setMeasure}
@@ -1267,7 +1072,10 @@ export function App() {
           <p className="text-muted-foreground">
             In search, type <code>is:green</code>, <code>is:needs-work</code>, <code>ci:pass</code>, <code>ci:fail</code>,{" "}
             <code>cr:clean</code>, <code>cr:comments</code>, <code>author:theo</code>, <code>tier:vouched</code>, <code>theme:mobile</code>,{" "}
-            <code>type:feat</code>, <code>opened:7d</code> or <code>is:draft</code>, then a space.
+            <code>type:feat</code>, <code>size:xl</code>, <code>failing:&gt;0</code>, <code>unresolved:3-9</code>, <code>is:draft</code>,{" "}
+            <code>created:7d</code> or <code>updated:&gt;30d</code>, then a space. Dates take <code>h</code>, <code>d</code>, <code>w</code>,{" "}
+            <code>m</code> or <code>y</code>; a leading <code>&gt;</code> means longer ago than that. Counts take <code>5</code>,{" "}
+            <code>&gt;5</code>, <code>&lt;=5</code> or <code>2-10</code>.
             {historyAvailable && <>Use <code>state:merged</code> and <code>label:codex</code> for history. </>}
             Prefix with <code>-</code> to exclude.
             Tiers come from <code>.github/VOUCHED.td</code> and <code>.github/TRIAGE_EXEMPTIONS.td</code>.
