@@ -1,3 +1,4 @@
+import { assess } from "./assessment";
 import {
   CalendarIcon,
   CheckCircle2Icon,
@@ -22,7 +23,7 @@ import {
   type LucideIcon,
 } from "lucide-react";
 import type { ReactNode } from "react";
-import { PR_LABELS, PR_STATES } from "../shared/history";
+import { changePurpose, PR_LABELS, PR_STATES } from "../shared/history";
 import { Avatar, Dot, STATE_LABEL, TIER_LABEL, TierBadge, aliasOf } from "@/components/people";
 import { CiStatusIcon, CrStatusIcon, HealthDot, MergeStatusIcon } from "@/components/status";
 import {
@@ -259,6 +260,11 @@ const openOnly = <T,>(pr: Pr, value: T) => (pr.open ? value : undefined);
 
 export const FIELDS: Field[] = [
   {
+    key: "benefit", label: "Estimated benefit", plural: "Benefit levels", icon: HeartPulseIcon,
+    bucket: pr => "state" in pr && pr.state === "merged" ? "historical" : assess(pr).benefit.toLowerCase(),
+    values: () => ["High", "Moderate", "Modest", "Unrated", "Historical"].map(label => ({ value: label.toLowerCase(), label })),
+  },
+  {
     key: "state",
     label: "State",
     plural: "states",
@@ -419,6 +425,18 @@ export const FIELDS: Field[] = [
     values: () => THEMES.map((t) => ({ value: t.slug, label: t.name, leading: tagIcon })),
     groupOrder: "count",
     matches: (pr, value) => themeOf(pr) === value || pr.theme.toLowerCase().startsWith(value),
+  },
+  {
+    key: "purpose",
+    label: "Fix or feature",
+    plural: "change purposes",
+    icon: ShapesIcon,
+    bucket: (pr) => changePurpose(pr.title),
+    values: () => [
+      { value: "fix", label: "Fix" },
+      { value: "feature", label: "Feature" },
+      { value: "other", label: "Other" },
+    ],
   },
   {
     key: "type",

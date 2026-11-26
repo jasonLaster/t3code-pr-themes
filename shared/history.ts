@@ -20,3 +20,14 @@ export function kindOf(title: string): PrKind {
   const prefix = title.match(/^([a-z]+)(?:\([^)]+\))?!?:/i)?.[1].toLowerCase();
   return PR_KINDS.find((kind) => kind === prefix) ?? "other";
 }
+
+/** Use declared types first, then common imperative titles for untyped PRs. */
+export function changePurpose(title: string): "fix" | "feature" | "other" {
+  const kind = kindOf(title);
+  if (kind === "fix") return "fix";
+  if (kind === "feat") return "feature";
+  if (kind !== "other") return "other";
+  if (/^(?:bugfix|fix(?:es)?|repair|resolve)\b/i.test(title)) return "fix";
+  if (/^(?:feature|feat|add|introduce|implement|enable|support)\b/i.test(title)) return "feature";
+  return "other";
+}

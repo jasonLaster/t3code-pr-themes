@@ -26,6 +26,7 @@ import {
 } from "lucide-react";
 import { lazy, memo, Suspense, useCallback, useDeferredValue, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { api } from "../convex/_generated/api";
+import { assess, rubric } from "./assessment";
 import { ChecksPanel } from "@/ChecksPanel";
 import { CommandPalette } from "@/components/command-palette";
 import { DisplayMenu } from "@/components/display";
@@ -155,6 +156,7 @@ const Row = memo(function Row({ pr, who, tier, selected, showTheme, now, onOpen 
         <PrStateIcon pr={pr} className="mr-1.5 inline align-[-2px]" />
         {pr.title}
       </span>
+      {(!isHistorical(pr) || pr.state === "closed") && <span className="shrink-0 text-xs text-muted-foreground" title={assess(pr).benefitReason}>Benefit · {assess(pr).benefit}</span>}
       {showTheme && (
         <Badge className="hidden h-[22px] max-w-44 shrink-0 gap-1.5 truncate px-2 @5xl:inline-flex">
           <TagIcon className="size-3" aria-hidden="true" />
@@ -190,6 +192,27 @@ const Row = memo(function Row({ pr, who, tier, selected, showTheme, now, onOpen 
     </div>
   );
 });
+
+function Assessment({ pr }: { pr: Pr }) {
+  const scores = assess(pr);
+  const body = useQuery(api.prs.description, isHistorical(pr) ? "skip" : { number: pr.number });
+  const qaEvidence = body?.split("\n").find(line =>
+    /(?:regression test|tests? pass|fail(?:s|ed)? on (?:base|main)|manually (?:tested|verified))/i.test(line)
+    && !/\[ \]/.test(line)
+  )?.replace(/^[-* ]+/, "").slice(0, 240);
+  return <section className="my-3 rounded-md border p-3 text-sm">
+    <h3 className="mb-2 font-semibold">PR value assessment</h3>
+    <dl className="grid grid-cols-[auto_1fr] gap-x-4 gap-y-1">
+      <dt>Benefit</dt><dd>{scores.benefit}. {scores.benefitReason}</dd>
+      <dt>Reach</dt><dd>{scores.reach}</dd>
+      <dt>Code quality</dt><dd>{isHistorical(pr) && !pr.review && !pr.crUnresolved ? "Review evidence unavailable in archive" : scores.code}</dd>
+      <dt>QA evidence</dt><dd>{isHistorical(pr) && !pr.ci ? "QA evidence unavailable in archive" : scores.qa}{qaEvidence && <p className="text-muted-foreground">PR description · {qaEvidence}</p>}</dd>
+    </dl>
+    <details className="mt-2 text-xs text-muted-foreground"><summary className="cursor-pointer">Scoring rubric and evidence limits</summary>
+      {rubric.map(line => <p className="mt-2" key={line}>{line}</p>)}
+    </details>
+  </section>;
+}
 
 const VIEWS: { label: string; who?: Who; tier?: Tier; author?: string }[] = [
   { label: "All pull requests" },
@@ -1106,6 +1129,7 @@ export function App() {
                       <span className="text-(--maintainer)">+{fmt(paneRow.additions)}</span> <span className="text-destructive/80">−{fmt(paneRow.deletions)}</span>
                     </dd>
                   </dl>
+                  {(paneRow.open || stateOf(paneRow) === "closed") && <Assessment pr={paneRow} />}
                   {paneRow.open && paneChecksAvailable && <ChecksPanel pr={paneRow} />}
                   {paneRow.open && (
                     <SegmentedControl
