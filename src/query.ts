@@ -12,13 +12,33 @@ import type { Pr } from "@/sync";
 export type FilterKey = string;
 export type Token = { neg: boolean; key: FilterKey; value: string };
 
+// An unfinished quoted value stays together while the user is typing it.
+const queryParts = (q: string) => q.match(/-?\w+:"[^"]*(?:"(?=\s|$)|$)|\S+/g) ?? [];
+
+export function readSearchInput(text: string, submit = false) {
+  const parts = queryParts(text);
+  const tail = parts.at(-1);
+  const unfinishedQuote = tail && /^-?\w+:"[^"]*$/.test(tail);
+  const pending = unfinishedQuote || (!submit && !/\s$/.test(text)) ? parts.pop() : undefined;
+  const { tokens, words } = parseQuery(parts.join(" "));
+  const pendingFilter = pending && /^-?\w+:/.test(pending);
+  return {
+    tokens,
+    words: pending && !pendingFilter ? [...words, pending.toLowerCase()] : words,
+    draft: [...words, ...(pending ? [pending] : [])].join(" ") + (!pending && !submit && /\s$/.test(text) && words.length ? " " : ""),
+  };
+}
+
 export function parseQuery(q: string) {
   const tokens: Token[] = [];
   const words: string[] = [];
-  for (const part of q.match(/-?\w+:"[^"]*"|\S+/g) ?? []) {
-    const m = part.match(/^(-?)(\w+):"?([^"]*)"?$/);
-    const field = m && filterField(m[2]);
-    if (m && field && m[3]) tokens.push({ neg: m[1] === "-", key: field.key, value: m[3].toLowerCase() });
+  for (const part of queryParts(q)) {
+    const m = part.match(/^(-?)(\w+):(?:"([^"]+)"|([^"\s]+))$/);
+    const value = (m?.[3] ?? m?.[4])?.toLowerCase();
+    // Keep existing is: links while composing draft state and check health independently.
+    const key = m?.[2].toLowerCase() === "is" ? (value === "draft" || value === "ready" ? "draft" : "health") : m?.[2];
+    const field = key && filterField(key);
+    if (m && field && value) tokens.push({ neg: m[1] === "-", key: field.key, value });
     else words.push(part.toLowerCase());
   }
   return { tokens, words };
@@ -72,6 +92,7 @@ export function makeMatcher(q: string, ctx: Ctx) {
   const negative: [Field, string][] = [];
   for (const t of tokens) {
     const f = filterField(t.key)!;
+    if (f.validValue && !f.validValue(t.value)) continue;
     if (t.neg) negative.push([f, t.value]);
     else positive.set(f, [...(positive.get(f) ?? []), t.value]);
   }

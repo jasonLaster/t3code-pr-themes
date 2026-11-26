@@ -77,6 +77,7 @@ import {
   isActive,
   makeMatcher,
   parseQuery,
+  readSearchInput,
   requestedStates,
   serialize,
   setOnly,
@@ -129,11 +130,11 @@ function readUrl() {
   return {
     q: p.get("q") ?? "",
     group: group && isGroupKey(group) ? group : "theme",
-    sort: sort && sort in SORT_LABEL ? sort : ("created" as SortBy),
+    sort: sort && Object.hasOwn(SORT_LABEL, sort) ? sort : ("created" as SortBy),
     view: (view === "insights" ? "insights" : "list") as ViewMode,
-    measure: measure && measure in MEASURE_LABEL ? measure : ("count" as Measure),
-    slice: slice && slice in SLICE_LABEL ? slice : null,
-    segment: segment && segment in SEGMENT_LABEL ? segment : ("who" as SegmentBy),
+    measure: measure && Object.hasOwn(MEASURE_LABEL, measure) ? measure : ("count" as Measure),
+    slice: slice && Object.hasOwn(SLICE_LABEL, slice) ? slice : null,
+    segment: segment && Object.hasOwn(SEGMENT_LABEL, segment) ? segment : ("who" as SegmentBy),
     pr: Number.isFinite(pr) && pr > 0 ? pr : null,
   };
 }
@@ -203,7 +204,7 @@ const VIEWS: { label: string; who?: Who; tier?: Tier; author?: string }[] = [
 type CheckView = {
   id: string;
   label: string;
-  key: "is" | "ci" | "cr";
+  key: "health" | "ci" | "cr";
   value: string;
   icon: ReactNode;
 };
@@ -212,14 +213,14 @@ const CHECK_VIEWS: CheckView[] = [
   {
     id: "green",
     label: "Green",
-    key: "is",
+    key: "health",
     value: "green",
     icon: <CheckCircle2Icon className="size-3.5 shrink-0 text-(--status-pass)" aria-hidden="true" />,
   },
   {
     id: "needs-work",
     label: "Needs work",
-    key: "is",
+    key: "health",
     value: "needs-work",
     icon: <AlertCircleIcon className="size-3.5 shrink-0 text-(--status-fail)" aria-hidden="true" />,
   },
@@ -240,7 +241,7 @@ const CHECK_VIEWS: CheckView[] = [
   {
     id: "running",
     label: "Running",
-    key: "is",
+    key: "health",
     value: "running",
     icon: <ClockIcon className="size-3.5 shrink-0 text-(--status-pending)" aria-hidden="true" />,
   },
@@ -251,12 +252,8 @@ const withView = (q: string, v: (typeof VIEWS)[number]) =>
   setOnly(q, ["author", "tier"], v.author ? { neg: false, key: "author", value: v.author } : v.tier ? { neg: false, key: "tier", value: v.tier } : undefined);
 
 /** The query after selecting a check view: check views are mutually exclusive, other filters are kept. */
-function withCheckView(q: string, cv: CheckView) {
-  const { tokens, words } = parseQuery(q);
-  const kept = tokens.filter((t) => t.key !== "ci" && t.key !== "cr" && !(t.key === "is" && HEALTH_IS.includes(t.value)));
-  return serialize([...kept, { neg: false, key: cv.key, value: cv.value }], words);
-}
-const HEALTH_IS = ["green", "needs-work", "running"];
+const withCheckView = (q: string, cv: CheckView) =>
+  setOnly(q, ["ci", "cr", "health"], { neg: false, key: cv.key, value: cv.value });
 
 /** The query after selecting a theme: replaces theme filters, keeps everything else. */
 const withTheme = (q: string, slug: string) => setOnly(q, ["theme"], { neg: false, key: "theme", value: slug });
@@ -268,13 +265,6 @@ const STATUS_VIEWS = [
   { value: "ready", label: "Ready for review" },
   { value: "draft", label: "Draft" },
 ];
-const STATUS_IS = STATUS_VIEWS.map((s) => s.value);
-
-/** The query after selecting ready/draft: replaces only those `is:` values, so health filters stay. */
-function withStatus(q: string, value: string) {
-  const { tokens, words } = parseQuery(q);
-  return serialize([...tokens.filter((t) => !(t.key === "is" && STATUS_IS.includes(t.value))), { neg: false, key: "is", value }], words);
-}
 
 type StateTab = "open" | "draft" | "merged" | "closed" | "all";
 const STATE_TABS: { id: StateTab; label: string; icon: ReactNode; history?: boolean }[] = [
@@ -288,13 +278,13 @@ const STATE_TABS: { id: StateTab; label: string; icon: ReactNode; history?: bool
 /** The query after picking a state tab: swaps state and draft/ready filters, keeps everything else. */
 function withStateTab(q: string, tab: StateTab) {
   const { tokens, words } = parseQuery(q);
-  const kept = tokens.filter((t) => t.key !== "state" && !(t.key === "is" && STATUS_IS.includes(t.value)));
+  const kept = tokens.filter((t) => t.key !== "state" && t.key !== "draft");
   // A positive label filter implies history, so open tabs need an explicit state.
   const needsOpen = kept.some((t) => t.key === "label" && !t.neg);
   const add = (key: FilterKey, value: string): Token => ({ neg: false, key, value });
   const extra: Token[] =
     tab === "open" ? (needsOpen ? [add("state", "open")] : [])
-    : tab === "draft" ? [...(needsOpen ? [add("state", "open")] : []), add("is", "draft")]
+    : tab === "draft" ? [...(needsOpen ? [add("state", "open")] : []), add("draft", "draft")]
     : tab === "all" ? PR_STATES.map((st) => add("state", st))
     : [add("state", tab)];
   return serialize([...kept, ...extra], words);
@@ -304,7 +294,7 @@ function activeStateTab(q: string): StateTab | null {
   const states = requestedStates(q);
   if (states.length === PR_STATES.length) return "all";
   if (states.length !== 1) return null;
-  if (states[0] === "open") return isActive(q, "is", "draft") ? "draft" : "open";
+  if (states[0] === "open") return isActive(q, "draft", "draft") ? "draft" : "open";
   return states[0];
 }
 
@@ -367,6 +357,14 @@ export function App() {
   const [explicitSlice, setExplicitSlice] = useState<SliceBy | null>(initial.slice);
   const [segment, setSegment] = useState<SegmentBy>(initial.segment);
   const [pane, setPane] = useState<number | null>(initial.pr);
+  const [desktopPane, setDesktopPane] = useState(() => matchMedia("(min-width: 48rem)").matches);
+  useEffect(() => {
+    const media = matchMedia("(min-width: 48rem)");
+    const change = () => setDesktopPane(media.matches);
+    media.addEventListener("change", change);
+    change();
+    return () => media.removeEventListener("change", change);
+  }, []);
   const [selected, setSelected] = useState<number | null>(initial.pr);
   const [paneTab, setPaneTab] = useState<PaneTab>(() => {
     try {
@@ -397,6 +395,7 @@ export function App() {
       return next;
     });
   const searchRef = useRef<HTMLInputElement>(null);
+  const mobileSearchRef = useRef<HTMLButtonElement>(null);
   const listRef = useRef<HTMLDivElement>(null);
   const filterRef = useRef<HTMLDivElement>(null);
   const displayRef = useRef<HTMLDivElement>(null);
@@ -451,15 +450,9 @@ export function App() {
 
   // Typing `author:theo ` in the search box turns the finished token into a filter chip.
   const onSearch = (text: string, commitAll = false) => {
-    const trailing = commitAll || /\s$/.test(text);
-    const pieces = text.trim().split(/\s+/).filter(Boolean);
-    const last = trailing ? undefined : pieces.pop();
-    const parsed = parseQuery(pieces.join(" "));
-    const pendingToken = last && /^-?\w+:/.test(last);
-    setQ((cur) =>
-      serialize([...parseQuery(cur).tokens, ...parsed.tokens], [...parsed.words, ...(last && !pendingToken ? [last.toLowerCase()] : [])]),
-    );
-    setDraft([...parsed.words, ...(last ? [last] : [])].join(" ") + (trailing && !commitAll && parsed.words.length ? " " : ""));
+    const input = readSearchInput(text, commitAll);
+    setQ((cur) => serialize([...parseQuery(cur).tokens, ...input.tokens], input.words));
+    setDraft(input.draft);
   };
   const clearAll = () => {
     setQ("");
@@ -588,7 +581,7 @@ export function App() {
           count: v.value === "open" ? openCount : states.includes(v.value as "merged" | "closed") && !historyLoading ? v.count : undefined,
         }));
       }
-      return { key: f.key, label: f.label, plural: f.plural, icon: f.icon, single: f.single, formatValue: f.formatValue, values };
+      return { key: f.key, label: f.label, plural: f.plural, icon: f.icon, single: f.single, formatValue: f.formatValue, validValue: f.validValue, values };
     });
   }, [all, deferredQ, ctx, states, rows, historyLoading, historyAvailable]);
   const groupChoices = useMemo(() => groupOptions(historyAvailable), [historyAvailable]);
@@ -617,7 +610,7 @@ export function App() {
       views: VIEWS.map((v) => count(withView(deferredQ, v))),
       checks: Object.fromEntries(CHECK_VIEWS.map((cv) => [cv.id, count(withCheckView(deferredQ, cv))])) as Record<string, number>,
       themes: Object.fromEntries(THEMES.map((t) => [t.slug, count(withTheme(deferredQ, t.slug))])) as Record<string, number>,
-      statuses: Object.fromEntries(STATUS_VIEWS.map((st) => [st.value, count(withStatus(deferredQ, st.value))])) as Record<string, number>,
+      statuses: Object.fromEntries(STATUS_VIEWS.map((st) => [st.value, count(withOnly(deferredQ, "draft", st.value))])) as Record<string, number>,
       types: Object.fromEntries(sidebarTypes.map((k) => [k, count(withOnly(deferredQ, "type", k))])) as Record<string, number>,
       opened: Object.fromEntries(RANGES.map((r) => [r.value, count(withOnly(deferredQ, "opened", r.value))])) as Record<string, number>,
     };
@@ -687,6 +680,19 @@ export function App() {
     });
   };
 
+  const closePane = () => setPane(null);
+  const renderPane = (content: ReactNode) => desktopPane ? content : (
+    <Dialog open onOpenChange={(open) => { if (!open) closePane(); }}>
+      <DialogContent
+        className="inset-0 flex w-full translate-x-0 rounded-none border-0 bg-background"
+        finalFocus={() => mobileSearchRef.current?.getClientRects().length ? mobileSearchRef.current : searchRef.current}
+      >
+        <DialogTitle className="sr-only">Pull request details</DialogTitle>
+        {content}
+      </DialogContent>
+    </Dialog>
+  );
+
   return (
     <div className="flex h-dvh overflow-hidden bg-sidebar text-foreground">
       <aside className="hidden w-60 shrink-0 flex-col md:flex">
@@ -736,9 +742,9 @@ export function App() {
             {STATUS_VIEWS.map((st) => (
               <SidebarItem
                 key={st.value}
-                active={isActive(q, "is", st.value)}
+                active={isActive(q, "draft", st.value)}
                 count={sidebarCounts.statuses[st.value] ?? 0}
-                onClick={() => setQ((cur) => (isActive(cur, "is", st.value) ? toggleToken(cur, "is", st.value) : withStatus(cur, st.value)))}
+                onClick={() => setQ((cur) => (isActive(cur, "draft", st.value) ? toggleToken(cur, "draft", st.value) : withOnly(cur, "draft", st.value)))}
               >
                 {st.value === "draft" ? (
                   <GitPullRequestDraftIcon className="size-3.5 shrink-0 text-muted-foreground" aria-hidden="true" />
@@ -842,7 +848,7 @@ export function App() {
             />
             <Kbd className="absolute top-1/2 right-1.5 -translate-y-1/2">/</Kbd>
           </div>
-          <Button variant="ghost" size="icon" className="sm:hidden" aria-label="Search" onClick={() => setPalette(true)}>
+          <Button ref={mobileSearchRef} variant="ghost" size="icon" className="sm:hidden" aria-label="Search" onClick={() => setPalette(true)}>
             <SearchIcon />
           </Button>
         </header>
@@ -991,10 +997,10 @@ export function App() {
             </main>
           )}
 
-          {pane && (
+          {pane && renderPane(
             <aside
               aria-label="Pull request"
-              className="fixed inset-0 z-30 overflow-y-auto bg-background px-6 pt-3 pb-10 md:static md:z-auto md:w-[min(560px,45vw)] md:shrink-0 md:border-l md:border-border"
+              className="min-w-0 flex-1 overflow-y-auto bg-background px-6 pt-3 pb-10 md:w-[min(560px,45vw)] md:flex-none md:border-l md:border-border"
             >
               {paneRow ? (
                 <>
@@ -1003,7 +1009,7 @@ export function App() {
                     <a className={buttonVariants({ variant: "outline", size: "sm" })} href={prUrl(paneRow.number)} target="_blank" rel="noopener">
                       GitHub <ArrowUpRightIcon aria-hidden="true" />
                     </a>
-                    <Button variant="ghost" size="icon-sm" onClick={() => setPane(null)} aria-label="Close">
+                    <Button variant="ghost" size="icon-sm" onClick={closePane} aria-label="Close">
                       <XIcon />
                     </Button>
                   </div>
@@ -1079,7 +1085,7 @@ export function App() {
                         <dd>{new Date(paneRow.mergedAt ?? paneRow.closedAt).toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" })}</dd>
                         {paneRow.labels.length > 0 && (
                           <>
-                            <dt className="text-muted-foreground">Labels</dt>
+                            <dt className="text-muted-foreground">{paneRow.labelSource ? "Inferred labels" : "Labels"}</dt>
                             <dd className="flex flex-wrap gap-1">
                               {paneRow.labels.map((label) => (
                                 <Button key={label} variant="outline" size="sm" onClick={() => setQ((cur) => toggleToken(cur, "label", label))}>
@@ -1126,7 +1132,7 @@ export function App() {
                     ) : (
                       <>
                         {!paneRow.open && <h3 className="mb-3 text-xs font-medium text-muted-foreground">Comments</h3>}
-                        <Comments number={paneRow.number} updatedAt={paneRow.updatedAt} />
+                        <Comments key={paneRow.number} number={paneRow.number} updatedAt={paneRow.updatedAt} />
                       </>
                     )}
                   </Suspense>
@@ -1134,10 +1140,10 @@ export function App() {
               ) : (
                 <p className="text-[13px] text-muted-foreground">
                   {loading ? "Loading pull request…" : `PR #${pane} is unavailable in this view.`}{" "}
-                  <button className="underline" onClick={() => setPane(null)}>Close</button>
+                  <button className="underline" onClick={closePane}>Close</button>
                 </p>
               )}
-            </aside>
+            </aside>,
           )}
         </div>
       </div>

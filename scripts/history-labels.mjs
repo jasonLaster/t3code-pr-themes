@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { existsSync, mkdirSync, readFileSync, readdirSync, renameSync, writeFileSync } from "node:fs";
 import { PR_KINDS, PR_LABELS, kindOf } from "../shared/history.ts";
-import { THEME_LIST } from "../shared/themes.ts";
+import { THEME_LIST, themeOf } from "../shared/themes.ts";
 
 const pagesDir = ".pr-backfill/pages";
 const labelsDir = ".pr-backfill/labels";
@@ -35,6 +35,13 @@ function validate(rows, values, complete = true) {
     expected.delete(number);
   }
   if (complete) assert.equal(expected.size, 0, `Missing PR numbers: ${[...expected.keys()].join(", ")}`);
+}
+
+const themeSlugs = new Map(THEME_LIST.map(({ name, slug }) => [name, slug]));
+const labelPattern = new RegExp(`\\b(${PR_LABELS.join("|")})\\b`, "gi");
+function inferClassification({ title }) {
+  const labels = [...new Set([...title.matchAll(labelPattern)].map(([label]) => label.toLowerCase()))].slice(0, 3);
+  return { theme: themeSlugs.get(themeOf(title)), kind: kindOf(title), labels, labelSource: "inferred" };
 }
 
 const [command, batch, input] = process.argv.slice(2);
@@ -73,8 +80,10 @@ if (command === "schema") {
   writeFileSync(`${path}.${process.pid}.tmp`, JSON.stringify(checkpoint) + "\n");
   renameSync(`${path}.${process.pid}.tmp`, path);
   console.log(JSON.stringify({ batch, validated: checkpoint.length, remaining: rows.length - checkpoint.length }));
-} else if (command === "pending" || command === "export" || command === "status") {
+} else if (["pending", "export", "export-complete", "status"].includes(command)) {
   const pages = readdirSync(pagesDir).filter((name) => /^\d{4}\.json$/.test(name)).sort();
+  const fill = command === "export-complete";
+  const prior = new Map(fill && batch ? read(batch).map((row) => [row.number, row]) : []);
   const all = new Map();
   const pending = [];
   let expected = 0;
@@ -91,7 +100,11 @@ if (command === "schema") {
       if (values.length < rows.length) pending.push(id);
       const labels = new Map(values.map((row) => [row.number, row]));
       for (const { author, isDraft, excerpt, ...row } of rows) {
-        const classification = labels.get(row.number);
+        const reviewed = prior.get(row.number);
+        const matchingReview = reviewed && reviewed.title === row.title && !reviewed.labelSource
+          ? { theme: reviewed.theme, kind: reviewed.kind, labels: reviewed.labels }
+          : undefined;
+        const classification = labels.get(row.number) ?? matchingReview ?? (fill ? inferClassification(row) : undefined);
         assert(!all.has(row.number), `Duplicate source PR #${row.number}`);
         all.set(row.number, classification && {
           ...row,
@@ -104,7 +117,13 @@ if (command === "schema") {
     }
   }
   const labeled = [...all.values()].filter(Boolean);
-  if (command === "export") {
+  if (command === "export" || fill) {
+    if (fill) {
+      const snapshot = read(".pr-backfill/inventory.json");
+      assert(complete && labeled.length === expected, "Full source snapshot required");
+      assert.equal(labeled.filter((row) => row.state === "merged").length, snapshot.merged);
+      assert.equal(labeled.filter((row) => row.state === "closed").length, snapshot.closed);
+    }
     for (const row of labeled) console.log(JSON.stringify(row));
   } else if (command === "pending") {
     const shard = batch === undefined ? null : Number(batch);
@@ -116,5 +135,5 @@ if (command === "schema") {
       closed: labeled.filter((row) => row.state === "closed").length }));
   }
 } else {
-  throw new Error("Use schema, brief BATCH, read BATCH [OFFSET], save BATCH FILE, append BATCH FILE, pending [SHARD], status, or export");
+  throw new Error("Use schema, brief BATCH, read BATCH [OFFSET], save BATCH FILE, append BATCH FILE, pending [SHARD], status, export, or export-complete [REVIEWED_JSON]");
 }

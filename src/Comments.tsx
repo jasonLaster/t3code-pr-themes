@@ -1,12 +1,14 @@
-import { useMutation, useQuery } from "convex/react";
+import { useMutation, useQueries } from "convex/react";
+import type { FunctionReturnType } from "convex/server";
 import { ArrowUpRightIcon, ChevronRightIcon, FileCodeIcon, RefreshCwIcon } from "lucide-react";
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { api } from "../convex/_generated/api";
 import { MarkdownBody } from "@/Description";
 import { Switch } from "@/components/ui/switch";
 import { cn } from "@/lib/utils";
 
-type Item = NonNullable<ReturnType<typeof useComments>>["items"][number];
+type Conversation = FunctionReturnType<typeof api.prs.comments>;
+type Item = NonNullable<Conversation>["items"][number];
 
 const BOTS = new Set(["coderabbitai", "vercel", "github-actions", "changeset-bot", "codecov", "dependabot", "renovate", "cursor", "greptile-apps", "copilot-pull-request-reviewer"]);
 export const isBot = (login: string) => BOTS.has(login.toLowerCase()) || /\[bot\]$|-bot$/i.test(login);
@@ -49,18 +51,24 @@ const REVIEW_VERB: Record<string, string> = {
   DISMISSED: "reviewed (dismissed)",
 };
 
-function useComments(number: number) {
-  return useQuery(api.prs.comments, { number });
-}
-
 /** Loads the GitHub conversation for a PR (fetching it on first open) and reports its size. */
 export function useConversation(number: number, updatedAt: string) {
-  const data = useComments(number);
+  const queries = useMemo(() => ({ comments: { query: api.prs.comments, args: { number } } }), [number]);
+  const { comments } = useQueries(queries) as {
+    comments: Conversation | Error | undefined;
+  };
   const ensure = useMutation(api.prs.ensureComments);
-  useEffect(() => {
-    void ensure({ number });
-  }, [ensure, number, updatedAt]);
-  return { data, refresh: () => void ensure({ number, force: true }) };
+  const [failed, setFailed] = useState(false);
+  const load = useCallback((force: boolean) => {
+    setFailed(false);
+    void ensure({ number, force }).catch(() => setFailed(true));
+  }, [ensure, number]);
+  useEffect(() => load(false), [load, updatedAt]);
+  return {
+    data: comments instanceof Error ? undefined : comments,
+    failed: comments instanceof Error || failed,
+    refresh: () => load(true),
+  };
 }
 
 export function commentCount(items: Item[] | undefined) {
@@ -119,9 +127,11 @@ function Header({ author, verb, createdAt, url, children }: { author: string; ve
   );
 }
 
-function Thread({ item }: { item: Item }) {
+function Thread({ item, hideBots }: { item: Item; hideBots: boolean }) {
   const [open, setOpen] = useState(!item.resolved);
-  const replies = item.replies ?? [];
+  const messages = [item, ...(item.replies ?? [])]
+    .map((comment, index) => ({ comment, index }))
+    .filter(({ comment }) => !hideBots || !isBot(comment.author));
   return (
     <div className="overflow-hidden rounded-lg border border-border bg-card">
       <button
@@ -140,18 +150,18 @@ function Thread({ item }: { item: Item }) {
         <span className="ml-auto shrink-0 text-muted-foreground">
           {!open && (
             <>
-              {item.author}
-              {replies.length > 0 && ` +${replies.length}`}
+              {messages[0].comment.author}
+              {messages.length > 1 && ` +${messages.length - 1}`}
             </>
           )}
         </span>
       </button>
       {open && (
         <div className="divide-y divide-border">
-          {[item, ...replies].map((c, i) => (
-            <div key={i} className="space-y-2 px-3 py-2.5">
-              <Header author={c.author} verb={i === 0 ? "commented" : "replied"} createdAt={c.createdAt} url={c.url} />
-              <Body body={c.body} />
+          {messages.map(({ comment, index }) => (
+            <div key={comment.url ?? index} className="space-y-2 px-3 py-2.5">
+              <Header author={comment.author} verb={index === 0 ? "commented" : "replied"} createdAt={comment.createdAt} url={comment.url} />
+              <Body body={comment.body} />
             </div>
           ))}
         </div>
@@ -161,20 +171,29 @@ function Thread({ item }: { item: Item }) {
 }
 
 export function Comments({ number, updatedAt }: { number: number; updatedAt: string }) {
-  const { data, refresh } = useConversation(number, updatedAt);
+  const { data, failed, refresh } = useConversation(number, updatedAt);
   const [hideBots, setHideBots] = useStoredFlag(HIDE_BOTS_KEY, false);
   const [hideResolved, setHideResolved] = useStoredFlag(HIDE_RESOLVED_KEY, false);
 
   const { shown, bots, resolved } = useMemo(() => {
     const items = data?.items ?? [];
     return {
-      bots: items.filter((it) => isBot(it.author)).length,
+      bots: items.reduce((n, it) => n + Number(isBot(it.author)) + (it.replies?.filter((reply) => isBot(reply.author)).length ?? 0), 0),
       resolved: items.filter((it) => it.kind === "thread" && it.resolved).length,
-      shown: items.filter((it) => !(hideBots && isBot(it.author)) && !(hideResolved && it.kind === "thread" && it.resolved)),
+      shown: items.filter((it) =>
+        !(hideResolved && it.kind === "thread" && it.resolved) &&
+        (!hideBots || !isBot(it.author) || it.replies?.some((reply) => !isBot(reply.author))),
+      ),
     };
   }, [data, hideBots, hideResolved]);
 
-  if (data === undefined || data === null) return <p className="text-[13px] text-muted-foreground">Loading comments from GitHub…</p>;
+  if (!data) {
+    return failed ? (
+      <p role="status" className="text-[13px] text-muted-foreground">
+        Comments are unavailable. <a className="underline" href={`https://github.com/pingdotgg/t3code/pull/${number}`} target="_blank" rel="noopener noreferrer">View on GitHub</a>
+      </p>
+    ) : <p className="text-[13px] text-muted-foreground">Loading comments from GitHub…</p>;
+  }
 
   return (
     <section aria-label="GitHub comments" className="space-y-3 text-[13px]">
@@ -192,6 +211,7 @@ export function Comments({ number, updatedAt }: { number: number; updatedAt: str
           Refresh
         </button>
       </div>
+      {failed && <p role="status" className="text-muted-foreground">Could not refresh comments.</p>}
 
       {shown.length === 0 ? (
         <p className="text-muted-foreground">{data.items.length === 0 ? "No comments yet." : "All comments are hidden by the filters above."}</p>
@@ -200,7 +220,7 @@ export function Comments({ number, updatedAt }: { number: number; updatedAt: str
           {shown.map((it, i) => (
             <li key={`${it.kind}:${it.url ?? i}`}>
               {it.kind === "thread" ? (
-                <Thread item={it} />
+                <Thread item={it} hideBots={hideBots} />
               ) : (
                 <div className={cn("space-y-2 rounded-lg border border-border bg-card px-3 py-2.5", it.reviewState === "CHANGES_REQUESTED" && "border-(--status-fail)/40", it.reviewState === "APPROVED" && "border-(--status-pass)/40")}>
                   <Header author={it.author} verb={it.kind === "review" ? REVIEW_VERB[it.reviewState ?? ""] ?? "reviewed" : "commented"} createdAt={it.createdAt} url={it.url} />

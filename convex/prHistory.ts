@@ -59,8 +59,12 @@ export const save = internalMutation({
       if (existing) {
         if (existing.updatedAt > row.updatedAt) continue;
         const { _id, _creationTime, ...previous } = existing;
-        if (JSON.stringify(previous, Object.keys(row).sort()) !== JSON.stringify(row, Object.keys(row).sort())) {
-          await ctx.db.replace(_id, row);
+        const next = row.labelSource && !previous.labelSource && row.title === previous.title
+          ? { ...row, labels: previous.labels, theme: previous.theme, labelSource: undefined }
+          : row;
+        const keys = [...new Set([...Object.keys(previous), ...Object.keys(next)])].sort();
+        if (JSON.stringify(previous, keys) !== JSON.stringify(next, keys)) {
+          await ctx.db.replace(_id, next);
         }
       } else {
         await ctx.db.insert("prHistory", row);

@@ -34,7 +34,9 @@ Use Node 24 or later and an authenticated, read-only `gh` CLI to resume the back
 2. Run `node scripts/history-labels.mjs status` and `node scripts/history-labels.mjs pending` to track progress. Assign a different batch to each Luna worker and use the [labeling instructions](scripts/history-labeling.md). Every saved row is validated and can be imported as soon as it is ready.
 3. Run `CI=1 npx convex dev --once`, then `node scripts/import-history.mjs` to upsert the checkpoints into `intent-marlin-697`. Keep `.pr-backfill/` in the same worktree to resume without relabeling results.
 
-Each historical PR has one of the 13 existing theme slugs, zero to three labels from `shared/history.ts`, a conventional-commit kind, and GitHub state and timestamps. Worker inputs include the title and up to 1,500 characters of the PR description. The open refresh uses the existing title rules. History captures a point-in-time inventory, so newer closures need a new backfill snapshot.
+Each historical PR has one of the 13 existing theme slugs, zero to three labels from `shared/history.ts`, a conventional-commit kind, and GitHub state and timestamps. Worker inputs include the title and up to 1,500 characters of the PR description. History captures a point-in-time inventory, so newer closures need a new backfill snapshot.
+
+After deploying the production Convex functions, run `node scripts/import-history.mjs --prod` to import a complete fetched snapshot into `glad-dinosaur-732`. It keeps reviewed classifications from the checkpoints or an optional `.pr-backfill/reviewed.json` export from dev. Remaining rows use the open-PR theme rules and vocabulary matches from their titles. The app marks those labels as inferred. Re-running the import upserts PRs by number.
 
 ## Deploy
 

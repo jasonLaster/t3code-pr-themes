@@ -105,6 +105,7 @@ export type Field = {
   matches?: (pr: Pr, value: string, ctx: Ctx) => boolean;
   /** Chip text for typed values that aren't menu choices, e.g. `2026-01-01..2026-01-31`. */
   formatValue?: (value: string) => string | null;
+  validValue?: (value: string) => boolean;
   /** Typed shorthands, e.g. `ci:green` means `ci:pass`. */
   valueAliases?: Record<string, string>;
   /** Not offered in Display → Grouping even though it has buckets. */
@@ -127,6 +128,21 @@ const DATE_BUCKETS: Option[] = [
   { value: "older", label: "Over a year ago" },
   { value: "never", label: "Never" },
 ];
+const RELATIVE_DATE = /^([<>])?(\d+)([hdwmy])$/;
+
+function absoluteDateRange(value: string) {
+  const range = value.match(OPENED_RANGE_RE);
+  if (!range) return null;
+  const [first, last] = range.slice(1);
+  const start = Date.parse(`${first}T00:00:00Z`);
+  const end = Date.parse(`${last}T00:00:00Z`);
+  if (!Number.isFinite(start) || !Number.isFinite(end) || start > end) return null;
+  if (new Date(start).toISOString().slice(0, 10) !== first || new Date(end).toISOString().slice(0, 10) !== last) return null;
+  return { start, end: end + DAY };
+}
+
+const isDateFilter = (value: string) =>
+  RELATIVE_DATE.test(value) || DATE_BUCKETS.some((bucket) => bucket.value === value) || absoluteDateRange(value) !== null;
 
 export function dateBucket(ms: number, now: number) {
   if (Number.isNaN(ms)) return "never";
@@ -147,16 +163,16 @@ export function dateBucket(ms: number, now: number) {
  * `2026-01-01..2026-01-31` = between two UTC days, plus `today` and `yesterday`.
  */
 export function matchDate(ms: number, value: string, now: number) {
+  if (value === "never") return Number.isNaN(ms);
   if (Number.isNaN(ms)) return false;
-  const m = value.match(/^([<>])?(\d+)([hdwmy])$/);
+  const m = value.match(RELATIVE_DATE);
   if (m) {
     const span = Number(m[2]) * UNIT[m[3]];
     return m[1] === ">" ? now - ms > span : now - ms <= span;
   }
-  const range = value.match(OPENED_RANGE_RE);
-  if (range) return ms >= Date.parse(`${range[1]}T00:00:00Z`) && ms <= Date.parse(`${range[2]}T23:59:59.999Z`);
-  if (value === "today" || value === "yesterday") return dateBucket(ms, now) === value;
-  return true;
+  const range = absoluteDateRange(value);
+  if (range) return ms >= range.start && ms < range.end;
+  return dateBucket(ms, now) === value;
 }
 
 export const DATE_RANGES: [string, string][] = [
@@ -182,6 +198,7 @@ function dateField(f: Pick<Field, "key" | "label" | "icon" | "aliases" | "histor
     filterValues: () => DATE_RANGES.map(([value, label]) => ({ value, label })),
     matches: (pr, value, ctx) => matchDate(ms(pr), value, ctx.now),
     formatValue: formatOpenedRange,
+    validValue: isDateFilter,
   };
 }
 
@@ -341,28 +358,7 @@ export const FIELDS: Field[] = [
     icon: HeartPulseIcon,
     bucket: (pr) => (pr.open ? healthOf(pr) : "none"),
     values: () => HEALTH_ORDER.map((h) => ({ value: h, label: HEALTH_LABEL[h], leading: <HealthDot health={h} /> })),
-    // Filtered through `is:green` / `is:needs-work` / `is:running` instead.
-    filterValues: false,
-  },
-  {
-    key: "is",
-    label: "Status",
-    plural: "statuses",
-    icon: CircleDashedIcon,
-    filterValues: () => [
-      { value: "green", label: "Green", leading: <HealthDot health="green" /> },
-      { value: "needs-work", label: "Needs work", leading: <HealthDot health="needs-work" /> },
-      { value: "running", label: "Running", leading: <HealthDot health="running" /> },
-      { value: "ready", label: "Ready for review" },
-      { value: "draft", label: "Draft" },
-    ],
     valueAliases: { red: "needs-work" },
-    matches: (pr, value) => {
-      if (value === "draft") return pr.draft;
-      if (value === "ready") return !pr.draft;
-      if (value === "green" || value === "needs-work" || value === "running") return healthOf(pr) === value;
-      return true;
-    },
   },
   {
     key: "draft",
@@ -374,8 +370,6 @@ export const FIELDS: Field[] = [
       { value: "ready", label: "Ready for review" },
       { value: "draft", label: "Draft", leading: <CircleDashedIcon className="size-3.5 text-muted-foreground" aria-hidden="true" /> },
     ],
-    // Filtered through `is:draft` / `is:ready` instead.
-    filterValues: false,
   },
   {
     key: "author",

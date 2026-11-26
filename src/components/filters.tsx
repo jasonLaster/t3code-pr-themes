@@ -15,6 +15,7 @@ export type Facet = {
   single?: boolean;
   /** Chip text for typed values that aren't menu choices, like a date span. */
   formatValue?: (value: string) => string | null;
+  validValue?: (value: string) => boolean;
   values: FacetValue[];
 };
 
@@ -159,13 +160,16 @@ export function FilterChips({ facets, q, setQ }: { facets: Facet[]; q: string; s
       {groups.map(({ key, neg, values }) => {
         const facet = facets.find((f) => f.key === key);
         if (!facet) return null;
-        const labelOf = (v: string) => facet.values.find((x) => x.value === v)?.label ?? facet.formatValue?.(v) ?? v;
-        const isSpan = values.length === 1 && !facet.values.some((x) => x.value === values[0]) && !!facet.formatValue?.(values[0]);
+        const invalid = values.some((v) => facet.validValue?.(v) === false);
+        const labelOf = (v: string) => facet.validValue?.(v) === false
+          ? `Invalid date (${v})`
+          : facet.values.find((x) => x.value === v)?.label ?? facet.formatValue?.(v) ?? v;
+        const isSpan = !invalid && values.length === 1 && !facet.values.some((x) => x.value === values[0]) && !!facet.formatValue?.(values[0]);
         const op = isSpan ? (neg ? "not during" : "during") : values.length > 1 ? (neg ? "is none of" : "is any of") : neg ? "is not" : "is";
         return (
           <div
             key={`${key}${neg}`}
-            className="flex h-6 items-stretch divide-x divide-border overflow-hidden rounded-md border border-border bg-card text-xs text-foreground"
+            className={cn("flex h-6 max-w-full items-stretch divide-x divide-border overflow-hidden rounded-md border border-border bg-card text-xs text-foreground", invalid && "border-destructive/60")}
           >
             <span className="flex items-center gap-1 px-1.5 text-muted-foreground">
               <facet.icon className="size-3" aria-hidden="true" />

@@ -13,7 +13,7 @@ import {
   UserIcon,
   XIcon,
 } from "lucide-react";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import type { Facet } from "@/components/filters";
 import { Command, CommandEmpty, CommandGroup, CommandGroupLabel, CommandInput, CommandItem, CommandList, CommandPage } from "@/components/ui/command";
 import { Dialog, DialogBackdrop, DialogContent, DialogTitle } from "@/components/ui/dialog";
@@ -62,6 +62,11 @@ export function CommandPalette({
 }: Props) {
   const [query, setQuery] = useState("");
   const [pages, setPages] = useState<string[]>([]);
+  useEffect(() => {
+    if (open) return;
+    setQuery("");
+    setPages([]);
+  }, [open]);
 
   const matches = useMemo(() => {
     const needle = query.trim().toLowerCase().replace(/^#/, "");
@@ -75,16 +80,7 @@ export function CommandPalette({
   };
 
   return (
-    <Dialog
-      open={open}
-      onOpenChange={(next) => {
-        onOpenChange(next);
-        if (next) {
-          setQuery("");
-          setPages([]);
-        }
-      }}
-    >
+    <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogBackdrop />
       <DialogContent>
         <DialogTitle className="sr-only">Command menu</DialogTitle>

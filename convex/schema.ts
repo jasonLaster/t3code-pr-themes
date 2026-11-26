@@ -70,6 +70,7 @@ export const historyFields = {
   mergedAt: v.union(v.string(), v.null()),
   theme: v.union(...THEME_LIST.map(({ slug }) => v.literal(slug))),
   labels: v.array(v.union(...PR_LABELS.map((label) => v.literal(label)))),
+  labelSource: v.optional(v.literal("inferred")),
   kind: v.union(...PR_KINDS.map((kind) => v.literal(kind))),
 };
 
