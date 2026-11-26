@@ -5,6 +5,7 @@ Pull requests on [pingdotgg/t3code](https://github.com/pingdotgg/t3code) grouped
 - **Convex** stores one row per open PR, each stamped with a sync version so clients fetch only what changed. A cron refreshes it from GitHub's GraphQL API every 5 minutes (`convex/crons.ts`).
 - **Stale-while-revalidate:** the page renders its cached rows right away and calls `prs.revalidate`, which starts a background refresh if the snapshot is older than 5 minutes. Convex queries are reactive, so open pages update when the refresh lands.
 - **Vite + React** client keeps a local replica of every open PR (IndexedDB), syncs deltas from `prs.since`, and filters locally. Themes come from keyword rules in `shared/themes.ts`; contributor tiers from `.github/VOUCHED.td` and `.github/TRIAGE_EXEMPTIONS.td`.
+- **Filters and grouping** come from one registry, `FIELDS` in `src/fields.tsx`. Each entry says how to bucket a PR, how to label the buckets and, if needed, how to filter. The filter menu, chips, typed `key:value` search, Display → Grouping and the command menu all read it, so a new property is one entry. Use `dateField` and `rangeField` for dates and counts.
 
 ## Develop
 

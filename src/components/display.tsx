@@ -4,18 +4,19 @@ import { Popover, PopoverContent, PopoverTitle, PopoverTrigger } from "@/compone
 import { SegmentedControl, SegmentedControlIndicator, SegmentedControlItem } from "@/components/ui/segmented-control";
 import { Select, SelectContent, SelectItem, SelectLabel, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { cn } from "@/lib/utils";
-import { GROUP_LABEL, SORT_LABEL, type GroupBy, type SortBy, type ViewMode } from "@/model";
+import type { GroupOption } from "@/fields";
+import { SORT_LABEL, type SortBy, type ViewMode } from "@/model";
 
 type Props = {
   view: ViewMode;
   setView: (v: ViewMode) => void;
-  group: GroupBy;
-  setGroup: (g: GroupBy) => void;
+  groups: GroupOption[];
+  group: string;
+  setGroup: (g: string) => void;
   sort: SortBy;
   setSort: (s: SortBy) => void;
 };
 
-const groupItems = (Object.keys(GROUP_LABEL) as GroupBy[]).map((value) => ({ value, label: GROUP_LABEL[value] }));
 const sortItems = (Object.keys(SORT_LABEL) as SortBy[]).map((value) => ({ value, label: SORT_LABEL[value] }));
 
 function Row({ label, children }: { label: string; children: React.ReactNode }) {
@@ -27,7 +28,8 @@ function Row({ label, children }: { label: string; children: React.ReactNode }) 
   );
 }
 
-export function DisplayMenu({ view, setView, group, setGroup, sort, setSort }: Props) {
+export function DisplayMenu({ view, setView, groups, group, setGroup, sort, setSort }: Props) {
+  const groupItems = groups.map(({ value, label }) => ({ value, label }));
   return (
     <Popover>
       <PopoverTrigger className={cn(buttonVariants({ variant: "outline" }))}>
@@ -53,7 +55,7 @@ export function DisplayMenu({ view, setView, group, setGroup, sort, setSort }: P
           </SegmentedControlItem>
         </SegmentedControl>
         <Row label="Grouping">
-          <Select items={groupItems} value={group} onValueChange={(v) => v && setGroup(v as GroupBy)}>
+          <Select items={groupItems} value={group} onValueChange={(v) => v && setGroup(v)}>
             <SelectLabel className="text-muted-foreground">Grouping</SelectLabel>
             <SelectTrigger className="w-40">
               <SelectValue />
