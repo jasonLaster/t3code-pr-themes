@@ -75,7 +75,11 @@ async function fetchRange(start, end, dateFilter, directory) {
   if (page.issueCount > 1000) {
     if (start === end) throw new Error(`GitHub search exceeds 1,000 PRs on ${qualifier}`);
     const middle = start + Math.floor((end - start) / (2 * day)) * day;
-    return [...await fetchRange(start, middle, dateFilter, directory), ...await fetchRange(middle + day, end, dateFilter, directory)];
+    const left = await fetchRange(start, middle, dateFilter, directory);
+    const right = await fetchRange(middle + day, end, dateFilter, directory);
+    const rows = [...left, ...right];
+    checkpoint(file, rows);
+    return rows;
   }
   const rows = new Map();
   const count = page.issueCount;
@@ -94,19 +98,27 @@ async function fetchRange(start, end, dateFilter, directory) {
 }
 
 function preparePages(all, complete) {
-  const merged = [...all.values()].filter((row) => row.state === "MERGED").length;
-  const closed = all.size - merged;
   const existing = readdirSync(pagesDir).filter((file) => /^\d{4}\.json$/.test(file)).sort();
+  const existingNumbers = new Set();
   let expected = all.size;
   for (const file of existing) {
     const page = read(`${pagesDir}/${file}`);
     if (!complete) expected = Math.max(expected, page.totalCount);
     for (const row of page.nodes) {
-      if (!all.delete(row.number) && complete) {
-        throw new Error(`Existing checkpoint PR #${row.number} is absent from the snapshot; inspect before replacing source data`);
+      existingNumbers.add(row.number);
+      if (!complete || all.has(row.number)) continue;
+      if (!row.closedAt || row.closedAt > cutoff || !["CLOSED", "MERGED"].includes(row.state)) {
+        throw new Error(`Checkpoint PR #${row.number} falls outside the snapshot`);
       }
+      // Keep verified repository records that GitHub's search index omitted.
+      all.set(row.number, row);
+      console.warn(`Preserved checkpoint PR #${row.number}, which GitHub search omitted`);
     }
   }
+  if (complete) expected = all.size;
+  const merged = [...all.values()].filter((row) => row.state === "MERGED").length;
+  const closed = all.size - merged;
+  for (const number of existingNumbers) all.delete(number);
   const rows = [...all.values()].sort((a, b) => a.number - b.number);
   for (let start = 0; start < rows.length; start += 100) {
     const name = String(existing.length + start / 100 + 1).padStart(4, "0");

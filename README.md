@@ -21,7 +21,7 @@ Select **State → Merged** or **State → Closed** in the Filter menu to browse
 
 Convex stores history in `prHistory`. The client requests the selected states in pages only when a filter calls for history. It uses the resulting metadata for filters and theme counts, and shows the list in groups of 200 rows. The IndexedDB replica and the `prs.since` cursor serve the open view.
 
-Use Node 24 or later and an authenticated, read-only `gh` CLI to resume the backfill:
+Use Node 24 or later and an authenticated, read-only `gh` CLI to resume the backfill.
 
 1. Run `node scripts/fetch-history.mjs` to fetch the GitHub snapshot. The cutoff and downloaded ranges are checkpointed under `.pr-backfill/`. Use `node scripts/fetch-history.mjs --prepare` to queue saved ranges for labeling while a fetch is incomplete.
 2. Run `node scripts/history-labels.mjs status` and `node scripts/history-labels.mjs pending` to track progress. Assign a different batch to each Luna worker and use the [labeling instructions](scripts/history-labeling.md). Every saved row is validated and can be imported as soon as it is ready.
