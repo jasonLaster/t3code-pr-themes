@@ -1,3 +1,4 @@
+import { PR_STATES, type PrState } from "../shared/history";
 import { THEME_LIST } from "../shared/themes";
 import type { Pr } from "./sync";
 
@@ -89,7 +90,7 @@ export const RANGES = [
   { value: "90d", label: "Last 3 months" },
 ];
 
-export const FILTER_KEYS = ["author", "theme", "tier", "type", "opened", "ci", "cr", "is"] as const;
+export const FILTER_KEYS = ["author", "theme", "tier", "type", "opened", "ci", "cr", "is", "state", "label"] as const;
 export type FilterKey = (typeof FILTER_KEYS)[number];
 const KEY_ALIASES: Record<string, FilterKey> = {
   by: "author",
@@ -116,6 +117,21 @@ export function parseQuery(q: string) {
   }
   return { tokens, words };
 }
+
+export function requestedStates(q: string): PrState[] {
+  const { tokens } = parseQuery(q);
+  const stateTokens = tokens.filter((t) => t.key === "state");
+  if (!stateTokens.length) {
+    return tokens.some((t) => t.key === "label" && !t.neg) ? ["merged", "closed"] : ["open"];
+  }
+  const included = stateTokens.filter((t) => !t.neg);
+  return PR_STATES.filter((state) =>
+    (!included.length || included.some((t) => t.value === state)) &&
+    !stateTokens.some((t) => t.neg && t.value === state),
+  );
+}
+
+export const stateOf = (pr: Pr): PrState => "state" in pr ? pr.state : "open";
 
 const tokenText = (t: Token) => `${t.neg ? "-" : ""}${t.key}:${/\s/.test(t.value) ? `"${t.value}"` : t.value}`;
 
@@ -193,7 +209,11 @@ function test(pr: Pr, key: FilterKey, value: string, contributors: Contributors,
       return tier === value || (value === "unvouched" && tier === "community");
     }
     case "type":
-      return pr.kind === value;
+      return (pr.kind || "other") === value;
+    case "state":
+      return stateOf(pr) === value;
+    case "label":
+      return "labels" in pr && pr.labels.some((label) => label === value);
     case "opened": {
       const range = value.match(OPENED_RANGE_RE);
       if (range) {
@@ -207,11 +227,11 @@ function test(pr: Pr, key: FilterKey, value: string, contributors: Contributors,
     }
     case "ci": {
       const target = CI_VALUE_ALIASES[value] ?? value;
-      return ciOf(pr) === target;
+      return pr.open && ciOf(pr) === target;
     }
     case "cr": {
       const target = CR_VALUE_ALIASES[value] ?? value;
-      return crOf(pr) === target;
+      return pr.open && crOf(pr) === target;
     }
     case "is":
       if (value === "draft") return pr.draft;

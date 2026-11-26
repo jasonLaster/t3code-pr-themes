@@ -1,6 +1,6 @@
 # t3code PR themes
 
-Open pull requests on [pingdotgg/t3code](https://github.com/pingdotgg/t3code) grouped by theme, with Julius and Theo broken out.
+Pull requests on [pingdotgg/t3code](https://github.com/pingdotgg/t3code) grouped by theme, with Julius and Theo broken out. The default view shows open PRs.
 
 - **Convex** stores one row per open PR, each stamped with a sync version so clients fetch only what changed. A cron refreshes it from GitHub's GraphQL API every 5 minutes (`convex/crons.ts`).
 - **Stale-while-revalidate:** the page renders its cached rows right away and calls `prs.revalidate`, which starts a background refresh if the snapshot is older than 5 minutes. Convex queries are reactive, so open pages update when the refresh lands.
@@ -14,6 +14,20 @@ npx convex dev          # pushes functions to your dev deployment, writes .env.l
 npx convex env set GITHUB_TOKEN <fine-grained token, public repos read-only>
 npm run dev
 ```
+
+## Historical PRs
+
+Select **State → Merged** or **State → Closed** in the Filter menu to browse historical PRs. Closed means closed without a merge. Add a **Label** chip to narrow the history. For example, enter `state:merged label:codex` in search. A positive `label:` filter by itself searches both historical states. History charts and facet counts cover the imported snapshot.
+
+Convex stores history in `prHistory`. The client requests the selected states in pages only when a filter calls for history. It uses the resulting metadata for filters and theme counts, and shows the list in groups of 200 rows. The IndexedDB replica and the `prs.since` cursor serve the open view.
+
+Use Node 24 or later and an authenticated, read-only `gh` CLI to resume the backfill.
+
+1. Run `node scripts/fetch-history.mjs` to fetch the GitHub snapshot. The cutoff and downloaded ranges are checkpointed under `.pr-backfill/`. Use `node scripts/fetch-history.mjs --prepare` to queue saved ranges for labeling while a fetch is incomplete.
+2. Run `node scripts/history-labels.mjs status` and `node scripts/history-labels.mjs pending` to track progress. Assign a different batch to each Luna worker and use the [labeling instructions](scripts/history-labeling.md). Every saved row is validated and can be imported as soon as it is ready.
+3. Run `CI=1 npx convex dev --once`, then `node scripts/import-history.mjs` to upsert the checkpoints into `intent-marlin-697`. Keep `.pr-backfill/` in the same worktree to resume without relabeling results.
+
+Each historical PR has one of the 13 existing theme slugs, zero to three labels from `shared/history.ts`, a conventional-commit kind, and GitHub state and timestamps. Worker inputs include the title and up to 1,500 characters of the PR description. The open refresh uses the existing title rules. History captures a point-in-time inventory, so newer closures need a new backfill snapshot.
 
 ## Deploy
 

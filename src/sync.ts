@@ -1,11 +1,24 @@
-import { useMutation, useQuery } from "convex/react";
+import { useMutation, usePaginatedQuery, useQuery } from "convex/react";
 import type { FunctionReturnType } from "convex/server";
 import { get, set } from "idb-keyval";
 import { useEffect, useState } from "react";
 import { api } from "../convex/_generated/api";
 
-export type Pr = FunctionReturnType<typeof api.prs.since>["rows"][number];
-type Store = { syncId: number; rows: ReadonlyMap<number, Pr> };
+type OpenPr = FunctionReturnType<typeof api.prs.since>["rows"][number];
+type HistoricalPr = FunctionReturnType<typeof api.prHistory.list>["page"][number];
+export type Pr = OpenPr | HistoricalPr;
+export const isHistorical = (pr: Pr): pr is HistoricalPr => "state" in pr;
+
+export function useHistory(state: HistoricalPr["state"], enabled: boolean) {
+  const { results, status, loadMore } = usePaginatedQuery(
+    api.prHistory.list, enabled ? { state } : "skip", { initialNumItems: 1000 },
+  );
+  useEffect(() => {
+    if (status === "CanLoadMore") loadMore(1000);
+  }, [status, loadMore]);
+  return { rows: results, loading: enabled && status !== "Exhausted" };
+}
+type Store = { syncId: number; rows: ReadonlyMap<number, OpenPr> };
 
 const CACHE_KEY = "prs-cache-v2";
 
@@ -19,7 +32,7 @@ export function useSyncedPrs() {
 
   useEffect(() => {
     let alive = true;
-    get<{ syncId: number; rows: Pr[] }>(CACHE_KEY)
+    get<{ syncId: number; rows: OpenPr[] }>(CACHE_KEY)
       .catch(() => undefined)
       .then((cache) => {
         if (alive) setStore({ syncId: cache?.syncId ?? 0, rows: new Map((cache?.rows ?? []).map((r) => [r.number, r])) });

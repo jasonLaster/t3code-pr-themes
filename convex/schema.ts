@@ -1,5 +1,7 @@
 import { defineSchema, defineTable } from "convex/server";
 import { v } from "convex/values";
+import { PR_KINDS, PR_LABELS } from "../shared/history";
+import { THEME_LIST } from "../shared/themes";
 
 export const ciStatus = v.union(
   v.literal("pass"),
@@ -38,6 +40,22 @@ export const prFields = {
   crTitle: v.optional(v.string()),
 };
 
+export const historyState = v.union(v.literal("merged"), v.literal("closed"));
+export const historySnapshotFields = {
+  cutoff: v.string(),
+  merged: v.number(),
+  closed: v.number(),
+};
+export const historyFields = {
+  ...prFields,
+  state: historyState,
+  closedAt: v.string(),
+  mergedAt: v.union(v.string(), v.null()),
+  theme: v.union(...THEME_LIST.map(({ slug }) => v.literal(slug))),
+  labels: v.array(v.union(...PR_LABELS.map((label) => v.literal(label)))),
+  kind: v.union(...PR_KINDS.map((kind) => v.literal(kind))),
+};
+
 export const checkDetail = v.object({
   name: v.string(),
   state: v.union(v.literal("pass"), v.literal("fail"), v.literal("pending"), v.literal("skipped")),
@@ -74,6 +92,10 @@ export default defineSchema({
     .index("by_number", ["number"])
     .index("by_open", ["open"])
     .index("by_syncId", ["syncId"]),
+  historySnapshot: defineTable(historySnapshotFields),
+  prHistory: defineTable(historyFields)
+    .index("by_number", ["number"])
+    .index("by_state_number", ["state", "number"]),
   // PR bodies, loaded one at a time when a PR is opened.
   bodies: defineTable({ number: v.number(), body: v.string() }).index("by_number", ["number"]),
   // Per-PR check runs and unresolved CodeRabbit threads, loaded on demand when a PR is opened.

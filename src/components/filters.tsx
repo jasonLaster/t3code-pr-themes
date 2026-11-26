@@ -5,7 +5,7 @@ import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover
 import { cn } from "@/lib/utils";
 import { flipGroup, formatOpenedRange, isActive, parseQuery, removeGroup, toggleToken, type FilterKey } from "@/model";
 
-export type FacetValue = { value: string; label: string; count: number; leading?: ReactNode };
+export type FacetValue = { value: string; label: string; count?: number; leading?: ReactNode };
 export type Facet = {
   key: FilterKey;
   label: string;
@@ -70,7 +70,7 @@ export function FilterMenu({ facets, q, setQ, startPage, neg = false, triggerCla
           {v.label}
         </span>
         {facet.single && on && <CheckIcon />}
-        <span className="text-xs text-muted-foreground tabular-nums">{v.count}</span>
+        {v.count !== undefined && <span className="text-xs text-muted-foreground tabular-nums">{v.count}</span>}
       </CommandItem>
     );
   };
@@ -155,7 +155,8 @@ export function FilterChips({ facets, q, setQ }: { facets: Facet[]; q: string; s
   return (
     <>
       {groups.map(({ key, neg, values }) => {
-        const facet = facets.find((f) => f.key === key)!;
+        const facet = facets.find((f) => f.key === key);
+        if (!facet) return null;
         const labelOf = (v: string) =>
           (key === "opened" ? formatOpenedRange(v) : null) ?? facet.values.find((x) => x.value === v)?.label ?? v;
         const isDateRange = key === "opened" && values.length === 1 && formatOpenedRange(values[0]) !== null;

@@ -43,7 +43,7 @@ export const status = query({
   args: {},
   handler: async (ctx) => {
     const s = await ctx.db.query("status").first();
-    return { fetchedAt: s?.fetchedAt ?? null, lastError: s?.lastError ?? null };
+    return { fetchedAt: s?.fetchedAt ?? null, lastError: s?.lastError ?? null, historyAvailable: true };
   },
 });
 

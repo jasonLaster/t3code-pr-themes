@@ -6,6 +6,7 @@ import {
   CalendarIcon,
   CheckCircle2Icon,
   CircleDashedIcon,
+  CircleDotIcon,
   ClockIcon,
   ListFilterIcon,
   ListIcon,
@@ -20,6 +21,7 @@ import {
 } from "lucide-react";
 import { lazy, memo, Suspense, useDeferredValue, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { api } from "../convex/_generated/api";
+import { PR_LABELS, PR_STATES } from "../shared/history";
 import { ChecksPanel } from "@/ChecksPanel";
 import { CommandPalette } from "@/components/command-palette";
 import { DisplayMenu } from "@/components/display";
@@ -67,8 +69,10 @@ import {
   isActive,
   makeMatcher,
   parseQuery,
+  requestedStates,
   serialize,
   setOnly,
+  stateOf,
   themeSlug,
   tierOf,
   toggleToken,
@@ -77,7 +81,6 @@ import {
   type Contributors,
   type CrStatus,
   type GroupBy,
-  type Health,
   type Measure,
   type SegmentBy,
   type SliceBy,
@@ -86,7 +89,7 @@ import {
   type ViewMode,
   type Who,
 } from "@/model";
-import { useRevalidateOnView, useSyncedPrs, type Pr } from "@/sync";
+import { isHistorical, useHistory, useRevalidateOnView, useSyncedPrs, type Pr } from "@/sync";
 
 // The markdown stack and insights charts are loaded on demand to keep the initial bundle lean.
 const Description = lazy(() => import("@/Description").then((m) => ({ default: m.Description })));
@@ -94,6 +97,8 @@ const InsightsView = lazy(() => import("@/components/insights").then((m) => ({ d
 
 const prUrl = (n: number) => `https://github.com/pingdotgg/t3code/pull/${n}`;
 const fmt = (n: number) => n.toLocaleString();
+const STATE_LABEL = { open: "Open", merged: "Merged", closed: "Closed" } as const;
+const HISTORY_ROW_PAGE = 200;
 const TIER_LABEL: Record<Tier, string> = { maintainer: "Maintainer", vouched: "Vouched", community: "Unvouched", denounced: "Denounced" };
 const aliasOf = (login: string) => Object.entries(ALIASES).find(([, l]) => l === login.toLowerCase())?.[0];
 
@@ -191,10 +196,12 @@ const Row = memo(function Row({ pr, who, tier, selected, showTheme, now, onOpen 
       <span className="hidden shrink-0 @4xl:inline-flex">
         <TierBadge tier={tier} />
       </span>
-      <span className="hidden shrink-0 items-center gap-1 @md:inline-flex">
-        <CiBadge pr={pr} className="w-[52px]" />
-        <CrBadge pr={pr} className="w-[50px]" />
-      </span>
+      {pr.open && (
+        <span className="hidden shrink-0 items-center gap-1 @md:inline-flex">
+          <CiBadge pr={pr} className="w-[52px]" />
+          <CrBadge pr={pr} className="w-[50px]" />
+        </span>
+      )}
       <span className="hidden w-24 shrink-0 text-right text-xs whitespace-nowrap tabular-nums @2xl:block" title={`+${pr.additions} −${pr.deletions}`}>
         <span className="text-(--maintainer)">+{fmt(pr.additions)}</span> <span className="text-destructive/80">−{fmt(pr.deletions)}</span>
       </span>
@@ -311,6 +318,24 @@ export function App() {
   const displayRef = useRef<HTMLDivElement>(null);
   const deferredQ = useDeferredValue(q);
   const effectiveSlice = explicitSlice ?? groupToSlice(group);
+  const states = useMemo(() => requestedStates(deferredQ), [deferredQ]);
+  // The frontend and Convex can roll out independently.
+  const historyRequested = states.includes("merged") || states.includes("closed");
+  const historyAvailable = status?.historyAvailable === true;
+  const historyUnavailable = historyRequested && status !== undefined && !historyAvailable;
+  const showMerged = historyAvailable && states.includes("merged");
+  const showClosed = historyAvailable && states.includes("closed");
+  const showHistory = showMerged || showClosed;
+  const showOpen = states.includes("open");
+  const merged = useHistory("merged", showMerged);
+  const closed = useHistory("closed", showClosed);
+  const historyLoading = merged.loading || closed.loading;
+  const snapshot = useQuery(api.prHistory.snapshot, showHistory ? {} : "skip");
+  const historyIncomplete = !snapshot ||
+    (showMerged && merged.rows.length < snapshot.merged) ||
+    (showClosed && closed.rows.length < snapshot.closed);
+  const [historyLimit, setHistoryLimit] = useState(HISTORY_ROW_PAGE);
+  useEffect(() => setHistoryLimit(HISTORY_ROW_PAGE), [deferredQ, group, sort]);
 
   useEffect(() => {
     const p = new URLSearchParams();
@@ -332,7 +357,12 @@ export function App() {
     () => new Map((contributorList ?? []).map((c) => [c.login, { tier: c.tier, reason: c.reason }])),
     [contributorList],
   );
-  const all = useMemo(() => (rows ? [...rows.values()] : []), [rows]);
+  const all = useMemo<Pr[]>(() => {
+    const open = showOpen && rows ? [...rows.values()] : [];
+    if (!showHistory || historyLoading || !rows) return open;
+    return [...open, ...(showMerged ? merged.rows : []), ...(showClosed ? closed.rows : [])]
+      .filter((pr) => pr.open || !rows.has(pr.number));
+  }, [rows, showOpen, showHistory, historyLoading, showMerged, merged.rows, showClosed, closed.rows]);
   const asOf = status?.fetchedAt ?? now;
 
   // Typing `author:theo ` in the search box turns the finished token into a filter chip.
@@ -393,9 +423,21 @@ export function App() {
     return entries;
   }, [filtered, group, contributors]);
 
-  const visible = useMemo(() => groups.flatMap(([k, list]) => (collapsed.has(k) ? [] : list)), [groups, collapsed]);
-  const paneRow = pane ? (rows?.get(pane) ?? null) : null;
-  const selectedRow = selected ? (rows?.get(selected) ?? null) : null;
+  const visibleGroups = useMemo(() => {
+    if (!showHistory) return groups;
+    let remaining = historyLimit;
+    return groups.flatMap(([key, list]): [string, Pr[]][] => {
+      if (remaining <= 0) return [];
+      if (collapsed.has(key)) return [[key, list]];
+      const visibleRows = list.slice(0, remaining);
+      remaining -= visibleRows.length;
+      return [[key, visibleRows]];
+    });
+  }, [groups, showHistory, historyLimit, collapsed]);
+  const visible = useMemo(() => visibleGroups.flatMap(([key, list]) => collapsed.has(key) ? [] : list), [visibleGroups, collapsed]);
+  const paneRow = pane ? all.find((pr) => pr.number === pane) : undefined;
+  const paneChecksAvailable = paneRow?.open && (historyAvailable || paneRow.ci !== undefined || paneRow.cr !== undefined);
+  const selectedRow = selected ? all.find((pr) => pr.number === selected) ?? null : null;
 
   const openPr = (n: number) => {
     setSelected(n);
@@ -470,21 +512,44 @@ export function App() {
   }, []);
 
   const facets = useMemo<Facet[]>(() => {
-    const countBy = (fn: (pr: Pr) => string) => {
+    const countBy = (fn: (pr: Pr) => string, source = all) => {
       const m = new Map<string, number>();
-      for (const pr of all) m.set(fn(pr), (m.get(fn(pr)) ?? 0) + 1);
+      for (const pr of source) m.set(fn(pr), (m.get(fn(pr)) ?? 0) + 1);
       return m;
     };
     const authors = [...countBy((pr) => pr.author)].sort((a, b) => b[1] - a[1]);
     const tiers = countBy((pr) => tierOf(pr.author, contributors));
     const themes = countBy((pr) => pr.theme);
     const kinds = [...countBy((pr) => pr.kind || "other")].sort((a, b) => b[1] - a[1]);
-    const ciCounts = countBy((pr) => ciOf(pr));
-    const crCounts = countBy((pr) => crOf(pr));
-    const healthCounts = countBy((pr) => healthOf(pr));
+    const stateCounts = countBy(stateOf);
+    const labels = new Map<string, number>();
+    for (const pr of all) {
+      if ("labels" in pr) for (const label of pr.labels) labels.set(label, (labels.get(label) ?? 0) + 1);
+    }
+    const openRows = all.filter((pr) => pr.open);
+    const ciCounts = countBy(ciOf, openRows);
+    const crCounts = countBy(crOf, openRows);
+    const healthCounts = countBy(healthOf, openRows);
     const drafts = all.filter((pr) => pr.draft).length;
     const tierWho: Record<Tier, Who> = { maintainer: "maintainer", vouched: "vouched", community: "community", denounced: "community" };
-    return [
+    const options: Facet[] = [
+      {
+        key: "state",
+        label: "State",
+        plural: "states",
+        icon: CircleDotIcon,
+        values: PR_STATES.map((state) => ({
+          value: state, label: STATE_LABEL[state],
+          count: state === "open" ? rows?.size : states.includes(state) && !historyLoading ? stateCounts.get(state) ?? 0 : undefined,
+        })),
+      },
+      {
+        key: "label",
+        label: "Label",
+        plural: "labels",
+        icon: TagIcon,
+        values: PR_LABELS.map((label) => ({ value: label, label, count: labels.get(label) })),
+      },
       {
         key: "ci",
         label: "CI",
@@ -563,7 +628,8 @@ export function App() {
         })),
       },
     ];
-  }, [all, contributors, asOf]);
+    return historyAvailable ? options : options.filter(({ key }) => key !== "state" && key !== "label");
+  }, [all, contributors, asOf, states, rows, historyLoading, historyAvailable]);
 
   const { tokens } = parseQuery(q);
   const people = tokens.filter((t) => t.key === "author" || t.key === "tier");
@@ -596,8 +662,22 @@ export function App() {
     listRef.current?.scrollTo(0, 0);
   };
 
-  const loading = rows === null || (rows.size === 0 && !status?.fetchedAt);
-  const title = activeView?.label ?? "Filtered";
+  const loading = historyLoading || (historyRequested && status === undefined) ||
+    rows === null || (showOpen && rows.size === 0 && !status?.fetchedAt);
+  const title = historyRequested ? "Pull request history" : activeView?.label ?? "Filtered";
+  const loadingMessage = historyRequested ? "Loading pull request history…" : "Loading pull requests…";
+  const historyNotice = historyUnavailable ? (
+    <p className="border-b border-border px-6 py-2 text-xs text-muted-foreground" role="status">
+      Pull request history is unavailable on this deployment.
+    </p>
+  ) : showHistory && !loading && historyIncomplete ? (
+    <p className="border-b border-border px-6 py-2 text-xs text-muted-foreground">
+      History backfill in progress
+      {snapshot ? ` · ${fmt(merged.rows.length + closed.rows.length)} of ${fmt(
+        (showMerged ? snapshot.merged : 0) + (showClosed ? snapshot.closed : 0),
+      )} PRs loaded` : ""}
+    </p>
+  ) : null;
 
   const toggleCheckView = (cv: CheckView) => {
     setQ((cur) => {
@@ -698,7 +778,7 @@ export function App() {
       <div className="flex min-w-0 flex-1 flex-col overflow-hidden bg-background md:my-2 md:mr-2 md:rounded-xl md:border md:border-border">
         <header className="flex h-11 shrink-0 items-center gap-2.5 border-b border-border px-4">
           <h1 className="truncate text-[13px] font-[510]">{title}</h1>
-          <span className="text-xs text-muted-foreground tabular-nums">{fmt(filtered.length)}</span>
+          <span className="text-xs text-muted-foreground tabular-nums">{loading ? "" : fmt(filtered.length)}</span>
           <SegmentedControl
             aria-label="View mode"
             value={view}
@@ -768,8 +848,9 @@ export function App() {
         <div className="flex min-h-0 flex-1">
           {view === "insights" ? (
             <main className="flex min-h-0 min-w-0 flex-1 flex-col" aria-label="Insights">
+              {historyNotice}
               {loading ? (
-                <p className="p-6 text-[13px] text-muted-foreground">Loading pull requests…</p>
+                <p className="p-6 text-[13px] text-muted-foreground">{loadingMessage}</p>
               ) : (
                 <Suspense fallback={<p className="p-6 text-[13px] text-muted-foreground">Loading insights…</p>}>
                   <InsightsView
@@ -797,15 +878,16 @@ export function App() {
             </main>
           ) : (
             <main ref={listRef} className="@container min-w-0 flex-1 overflow-y-auto" aria-label="Pull requests">
+              {historyNotice}
               {loading ? (
-                <p className="p-6 text-[13px] text-muted-foreground">Loading pull requests…</p>
+                <p className="p-6 text-[13px] text-muted-foreground">{loadingMessage}</p>
               ) : filtered.length === 0 ? (
                 <div className="grid place-items-center gap-3 p-16 text-center text-[13px] text-muted-foreground">
-                  No pull requests match these filters.
+                  {!historyUnavailable && "No pull requests match these filters."}
                   <Button size="sm" onClick={clearAll}>Clear filters</Button>
                 </div>
               ) : (
-                groups.map(([key, list]) => {
+                visibleGroups.map(([key, list]) => {
                   const healthKey = group === "health" ? HEALTH_ORDER.find((h) => HEALTH_LABEL[h] === key) : undefined;
                   const ciKey = group === "ci" ? CI_STATUSES.find((s) => CI_LABEL[s] === key) : undefined;
                   const crKey = group === "cr" ? CR_STATUSES.find((s) => CR_LABEL[s] === key) : undefined;
@@ -831,7 +913,7 @@ export function App() {
                         {crKey && <CrStatusIcon status={crKey as CrStatus} />}
                         <span className="font-[510]">{key}</span>
                         {group === "author" && <TierBadge tier={tierOf(key, contributors)} />}
-                        <span className="text-muted-foreground tabular-nums">{fmt(list.length)}</span>
+                        <span className="text-muted-foreground tabular-nums">{fmt(groups.find(([name]) => name === key)?.[1].length ?? list.length)}</span>
                       </button>
                       {!collapsed.has(key) &&
                         list.map((pr) => (
@@ -849,6 +931,12 @@ export function App() {
                     </section>
                   );
                 })
+              )}
+              {showHistory && !loading && visible.length < groups.reduce((sum, [key, list]) =>
+                sum + (collapsed.has(key) ? 0 : list.length), 0) && (
+                <Button variant="ghost" size="sm" className="m-4" onClick={() => setHistoryLimit((limit) => limit + HISTORY_ROW_PAGE)}>
+                  Show more pull requests
+                </Button>
               )}
             </main>
           )}
@@ -885,26 +973,30 @@ export function App() {
                         <span className="w-full text-xs text-muted-foreground">{contributors.get(paneRow.author.toLowerCase())!.reason}</span>
                       )}
                     </dd>
-                    <dt className="text-muted-foreground">CI</dt>
-                    <dd className="flex items-center gap-2">
-                      <button
-                        className="inline-flex cursor-default items-center gap-2 hover:underline"
-                        onClick={() => setQ((cur) => toggleToken(cur, "ci", ciOf(paneRow)))}
-                      >
-                        <CiBadge pr={paneRow} />
-                        <span className="text-xs text-muted-foreground">{ciSummaryText(paneRow)}</span>
-                      </button>
-                    </dd>
-                    <dt className="text-muted-foreground">CodeRabbit</dt>
-                    <dd className="flex items-center gap-2">
-                      <button
-                        className="inline-flex cursor-default items-center gap-2 hover:underline"
-                        onClick={() => setQ((cur) => toggleToken(cur, "cr", crOf(paneRow)))}
-                      >
-                        <CrBadge pr={paneRow} />
-                        <span className="text-xs text-muted-foreground">{crSummaryText(paneRow)}</span>
-                      </button>
-                    </dd>
+                    {paneChecksAvailable && (
+                      <>
+                        <dt className="text-muted-foreground">CI</dt>
+                        <dd className="flex items-center gap-2">
+                          <button
+                            className="inline-flex cursor-default items-center gap-2 hover:underline"
+                            onClick={() => setQ((cur) => toggleToken(cur, "ci", ciOf(paneRow)))}
+                          >
+                            <CiBadge pr={paneRow} />
+                            <span className="text-xs text-muted-foreground">{ciSummaryText(paneRow)}</span>
+                          </button>
+                        </dd>
+                        <dt className="text-muted-foreground">CodeRabbit</dt>
+                        <dd className="flex items-center gap-2">
+                          <button
+                            className="inline-flex cursor-default items-center gap-2 hover:underline"
+                            onClick={() => setQ((cur) => toggleToken(cur, "cr", crOf(paneRow)))}
+                          >
+                            <CrBadge pr={paneRow} />
+                            <span className="text-xs text-muted-foreground">{crSummaryText(paneRow)}</span>
+                          </button>
+                        </dd>
+                      </>
+                    )}
                     <dt className="text-muted-foreground">Theme</dt>
                     <dd>
                       <button className="flex cursor-default items-center gap-1.5 hover:underline" onClick={() => setQ((cur) => toggleToken(cur, "theme", themeSlug(paneRow.theme)))}>
@@ -913,7 +1005,25 @@ export function App() {
                       </button>
                     </dd>
                     <dt className="text-muted-foreground">Status</dt>
-                    <dd>{paneRow.draft ? "Draft" : "Ready for review"}</dd>
+                    <dd>{paneRow.open ? (paneRow.draft ? "Draft" : "Ready for review") : STATE_LABEL[stateOf(paneRow)]}</dd>
+                    {isHistorical(paneRow) && (
+                      <>
+                        <dt className="text-muted-foreground">{STATE_LABEL[paneRow.state]} on</dt>
+                        <dd>{new Date(paneRow.mergedAt ?? paneRow.closedAt).toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" })}</dd>
+                        {paneRow.labels.length > 0 && (
+                          <>
+                            <dt className="text-muted-foreground">Labels</dt>
+                            <dd className="flex flex-wrap gap-1">
+                              {paneRow.labels.map((label) => (
+                                <Button key={label} variant="outline" size="sm" onClick={() => setQ((cur) => toggleToken(cur, "label", label))}>
+                                  {label}
+                                </Button>
+                              ))}
+                            </dd>
+                          </>
+                        )}
+                      </>
+                    )}
                     <dt className="text-muted-foreground">Opened</dt>
                     <dd>{new Date(paneRow.createdAt).toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" })}</dd>
                     <dt className="text-muted-foreground">Updated</dt>
@@ -923,14 +1033,18 @@ export function App() {
                       <span className="text-(--maintainer)">+{fmt(paneRow.additions)}</span> <span className="text-destructive/80">−{fmt(paneRow.deletions)}</span>
                     </dd>
                   </dl>
-                  <ChecksPanel pr={paneRow} />
-                  <Suspense fallback={<p className="text-[13px] text-muted-foreground">Loading description…</p>}>
-                    <Description number={paneRow.number} />
-                  </Suspense>
+                  {paneRow.open && (
+                    <>
+                      {paneChecksAvailable && <ChecksPanel pr={paneRow} />}
+                      <Suspense fallback={<p className="text-[13px] text-muted-foreground">Loading description…</p>}>
+                        <Description number={paneRow.number} />
+                      </Suspense>
+                    </>
+                  )}
                 </>
               ) : (
                 <p className="text-[13px] text-muted-foreground">
-                  PR #{pane} is no longer open.{" "}
+                  {loading ? "Loading pull request…" : `PR #${pane} is unavailable in this view.`}{" "}
                   <button className="underline" onClick={() => setPane(null)}>Close</button>
                 </p>
               )}
@@ -982,7 +1096,9 @@ export function App() {
           <p className="text-muted-foreground">
             In search, type <code>is:green</code>, <code>is:needs-work</code>, <code>ci:pass</code>, <code>ci:fail</code>,{" "}
             <code>cr:clean</code>, <code>cr:comments</code>, <code>author:theo</code>, <code>tier:vouched</code>, <code>theme:mobile</code>,{" "}
-            <code>type:feat</code>, <code>opened:7d</code> or <code>is:draft</code>, then a space. Prefix with <code>-</code> to exclude.
+            <code>type:feat</code>, <code>opened:7d</code> or <code>is:draft</code>, then a space.
+            {historyAvailable && <>Use <code>state:merged</code> and <code>label:codex</code> for history. </>}
+            Prefix with <code>-</code> to exclude.
             Tiers come from <code>.github/VOUCHED.td</code> and <code>.github/TRIAGE_EXEMPTIONS.td</code>.
           </p>
           <div className="mt-3 flex items-center gap-2 text-xs text-muted-foreground">
