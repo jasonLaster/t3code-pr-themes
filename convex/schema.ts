@@ -89,6 +89,28 @@ export const crThreadDetail = v.object({
   url: v.optional(v.string()),
 });
 
+export const commentDetail = v.object({
+  author: v.string(),
+  body: v.string(),
+  createdAt: v.string(),
+  url: v.optional(v.string()),
+});
+
+// One entry in a PR's conversation: a top-level comment, a review summary, or an inline review thread.
+export const conversationItem = v.object({
+  kind: v.union(v.literal("comment"), v.literal("review"), v.literal("thread")),
+  author: v.string(),
+  body: v.string(),
+  createdAt: v.string(),
+  url: v.optional(v.string()),
+  reviewState: v.optional(v.string()),
+  path: v.optional(v.string()),
+  line: v.optional(v.number()),
+  resolved: v.optional(v.boolean()),
+  outdated: v.optional(v.boolean()),
+  replies: v.optional(v.array(commentDetail)),
+});
+
 export default defineSchema({
   // One row per PR. `syncId` comes from a global counter bumped on every change,
   // so clients can ask for "everything after N" and get only the delta.
@@ -122,6 +144,14 @@ export default defineSchema({
     fetchedAt: v.number(),
     checks: v.array(checkDetail),
     crThreads: v.array(crThreadDetail),
+  }).index("by_number", ["number"]),
+  // Full GitHub conversation (comments, reviews, inline threads), loaded on demand when a PR is opened.
+  prComments: defineTable({
+    number: v.number(),
+    updatedAt: v.string(),
+    fetchedAt: v.number(),
+    items: v.array(conversationItem),
+    truncated: v.boolean(),
   }).index("by_number", ["number"]),
   // From .github/TRIAGE_EXEMPTIONS.td (maintainers) and .github/VOUCHED.td.
   contributors: defineTable({

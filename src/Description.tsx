@@ -17,8 +17,13 @@ export function Description({ number }: { number: number }) {
   const body = useQuery(api.prs.description, { number });
   if (body === undefined) return <p className="muted">Loading description…</p>;
   if (!body?.trim()) return <p className="muted">No description.</p>;
+  return <MarkdownBody body={body} />;
+}
+
+/** GitHub-flavored markdown, sanitized, with repo-relative links and #refs made absolute. */
+export function MarkdownBody({ body, className = "md" }: { body: string; className?: string }) {
   return (
-    <div className="md">
+    <div className={className}>
       <Markdown
         remarkPlugins={[remarkGfm]}
         // Raw HTML is common in PR bodies (<details>, <img>); sanitize after parsing it.
