@@ -14,6 +14,7 @@ import type { Measure, SliceBy } from "@/model";
 import type { Pr } from "@/sync";
 
 type Scale = "value" | "share";
+type ChartStyle = "stacked" | "lines";
 type SeriesPick = { key: string; slot: number };
 
 type Props = {
@@ -34,16 +35,95 @@ const fmt = (n: number) => n.toLocaleString();
 
 type Pt = [x: number, y: number] | null;
 
-function linePath(points: readonly Pt[]) {
+type Seg = { p0: [number, number]; c1: [number, number]; c2: [number, number]; p1: [number, number] };
+
+const sign = (v: number) => (v < 0 ? -1 : 1);
+const xy = (p: [number, number]) => `${p[0].toFixed(1)},${p[1].toFixed(1)}`;
+
+/**
+ * Monotone cubic segments (the same curve as d3's curveMonotoneX): smooth, but never
+ * overshooting a data point, so a curve never dips below zero or invents a peak.
+ * segments[i] joins point i to i + 1, or is null across a gap.
+ */
+function smoothSegments(points: readonly Pt[]): (Seg | null)[] {
+  const segs: (Seg | null)[] = points.slice(0, -1).map(() => null);
+  let i = 0;
+  while (i < points.length) {
+    if (!points[i]) {
+      i++;
+      continue;
+    }
+    let j = i;
+    while (j + 1 < points.length && points[j + 1]) j++;
+    const run = points.slice(i, j + 1) as [number, number][];
+    const slopes = run.slice(0, -1).map((p, k) => (run[k + 1][1] - p[1]) / (run[k + 1][0] - p[0] || 1));
+    const tangents = run.map((p, k) => {
+      if (run.length < 3) return slopes[0] ?? 0;
+      if (k > 0 && k < run.length - 1) {
+        const h0 = p[0] - run[k - 1][0];
+        const h1 = run[k + 1][0] - p[0];
+        const [s0, s1] = [slopes[k - 1], slopes[k]];
+        const mid = (s0 * h1 + s1 * h0) / (h0 + h1);
+        return (sign(s0) + sign(s1)) * Math.min(Math.abs(s0), Math.abs(s1), 0.5 * Math.abs(mid)) || 0;
+      }
+      return NaN;
+    });
+    if (run.length >= 3) {
+      tangents[0] = (3 * slopes[0] - tangents[1]) / 2;
+      const last = run.length - 1;
+      tangents[last] = (3 * slopes[last - 1] - tangents[last - 1]) / 2;
+    }
+    for (let k = 0; k < run.length - 1; k++) {
+      const [p0, p1] = [run[k], run[k + 1]];
+      const dx = (p1[0] - p0[0]) / 3;
+      segs[i + k] = {
+        p0,
+        c1: [p0[0] + dx, p0[1] + tangents[k] * dx],
+        c2: [p1[0] - dx, p1[1] - tangents[k + 1] * dx],
+        p1,
+      };
+    }
+    i = j + 1;
+  }
+  return segs;
+}
+
+/** Path through segments [from, to), lifting the pen across gaps. */
+function linePath(segs: readonly (Seg | null)[], from = 0, to = segs.length) {
   let d = "";
   let pen = false;
-  for (const p of points) {
-    if (!p) {
+  for (let i = from; i < to; i++) {
+    const g = segs[i];
+    if (!g) {
       pen = false;
       continue;
     }
-    d += `${pen ? "L" : "M"}${p[0].toFixed(1)},${p[1].toFixed(1)}`;
+    if (!pen) d += `M${xy(g.p0)}`;
+    d += `C${xy(g.c1)} ${xy(g.c2)} ${xy(g.p1)}`;
     pen = true;
+  }
+  return d;
+}
+
+/** Filled band between two smoothed curves, one closed shape per unbroken run. */
+function areaPath(tops: readonly (Seg | null)[], bases: readonly (Seg | null)[]) {
+  let d = "";
+  let i = 0;
+  while (i < tops.length) {
+    if (!tops[i] || !bases[i]) {
+      i++;
+      continue;
+    }
+    let j = i;
+    while (j + 1 < tops.length && tops[j + 1] && bases[j + 1]) j++;
+    d += linePath(tops, i, j + 1);
+    d += `L${xy(bases[j]!.p1)}`;
+    for (let k = j; k >= i; k--) {
+      const b = bases[k]!;
+      d += `C${xy(b.c2)} ${xy(b.c1)} ${xy(b.p0)}`;
+    }
+    d += "Z";
+    i = j + 1;
   }
   return d;
 }
@@ -64,6 +144,7 @@ export function TrendsChart({ prs, measure, onDrillDown }: Props) {
   const [group, setGroup] = useState<TrendGroup>("type");
   const [interval, setIntervalUnit] = useState<TrendInterval>("week");
   const [scale, setScale] = useState<Scale>("value");
+  const [chartStyle, setChartStyle] = useState<ChartStyle>("stacked");
   const data = useMemo(() => buildTrendData(prs, measure, group, interval), [prs, measure, group, interval]);
   const [picks, setPicks] = useState<SeriesPick[] | null>(null);
   const [hoverIdx, setHoverIdx] = useState<number | null>(null);
@@ -108,9 +189,11 @@ export function TrendsChart({ prs, measure, onDrillDown }: Props) {
     setPicks([...current, { key, slot }]);
   };
 
-  const shown = activePicks
-    .map((p) => data.series.find((s) => s.key === p.key))
-    .filter((s): s is NonNullable<typeof s> => !!s);
+  const stacked = chartStyle === "stacked";
+  // Stacks put the largest series at the bottom so the bands stay steady.
+  const shown = stacked
+    ? data.series.filter((s) => slotOf.has(s.key))
+    : activePicks.map((p) => data.series.find((s) => s.key === p.key)).filter((s): s is NonNullable<typeof s> => !!s);
   // Shares of near-empty periods are noise (1 PR = 100%), so those points are left as gaps.
   const valueAt = (seriesIdx: number, i: number): number | null => {
     const v = shown[seriesIdx].values[i];
@@ -119,8 +202,18 @@ export function TrendsChart({ prs, measure, onDrillDown }: Props) {
     return count >= MIN_SHARE_PRS && total > 0 ? (v / total) * 100 : null;
   };
 
+  /** Bottom and top of a series' mark at period i: its band when stacked, zero to its value otherwise. */
+  const bandAt = (si: number, i: number): [number, number] | null => {
+    const v = valueAt(si, i);
+    if (v === null) return null;
+    if (!stacked) return [0, v];
+    let base = 0;
+    for (let k = 0; k < si; k++) base += valueAt(k, i) ?? 0;
+    return [base, base + v];
+  };
+
   const n = data.periods.length;
-  const maxVal = Math.max(0, ...shown.flatMap((_, si) => data.periods.map((__, i) => valueAt(si, i) ?? 0)));
+  const maxVal = Math.max(0, ...shown.flatMap((_, si) => data.periods.map((__, i) => bandAt(si, i)?.[1] ?? 0)));
   const { top, ticks } = useMemo(() => {
     if (scale === "share") {
       const t = niceTicks(Math.min(100, Math.max(5, maxVal)), 4);
@@ -138,15 +231,16 @@ export function TrendsChart({ prs, measure, onDrillDown }: Props) {
   const maxLabels = Math.max(2, Math.floor(plotW / 64));
   const labelStep = Math.max(1, Math.ceil(n / maxLabels));
 
-  const lastValue = (si: number) => {
+  // End labels sit at the line's last value, or the middle of the band when stacked.
+  const labelValue = (si: number) => {
     for (let i = n - 1; i >= 0; i--) {
-      const v = valueAt(si, i);
-      if (v !== null) return v;
+      const b = bandAt(si, i);
+      if (b) return stacked ? (b[0] + b[1]) / 2 : b[1];
     }
     return 0;
   };
   const endYs = spreadLabels(
-    shown.map((_, si) => yOf(lastValue(si))),
+    shown.map((_, si) => yOf(labelValue(si))),
     TOP_PAD + 4,
     TOP_PAD + PLOT_HEIGHT,
   );
@@ -183,6 +277,11 @@ export function TrendsChart({ prs, measure, onDrillDown }: Props) {
           </p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
+          <SegmentedControl value={chartStyle} onValueChange={(v) => v && setChartStyle(v as ChartStyle)} aria-label="Chart style">
+            <SegmentedControlIndicator />
+            <SegmentedControlItem value="stacked">Stacked</SegmentedControlItem>
+            <SegmentedControlItem value="lines">Lines</SegmentedControlItem>
+          </SegmentedControl>
           <SegmentedControl value={group} onValueChange={(v) => v && setGroup(v as TrendGroup)} aria-label="Group trends by">
             <SegmentedControlIndicator />
             <SegmentedControlItem value="type">Type</SegmentedControlItem>
@@ -239,7 +338,7 @@ export function TrendsChart({ prs, measure, onDrillDown }: Props) {
           height={TOP_PAD + PLOT_HEIGHT + 26}
           className="block overflow-visible"
           role="img"
-          aria-label={`Line chart of ${shown.map((s) => s.label).join(", ")} per ${interval}`}
+          aria-label={`${stacked ? "Stacked area" : "Line"} chart of ${shown.map((s) => s.label).join(", ")} per ${interval}`}
         >
           {ticks.map((tick) => {
             const y = Math.round(yOf(tick)) + 0.5;
@@ -295,18 +394,19 @@ export function TrendsChart({ prs, measure, onDrillDown }: Props) {
 
           {shown.map((s, si) => {
             const color = slotColor(slotOf.get(s.key) ?? 0);
-            const pts: Pt[] = data.periods.map((_, i) => {
-              const v = valueAt(si, i);
-              return v === null ? null : [xOf(i), yOf(v)];
-            });
+            const bands = data.periods.map((_, i) => bandAt(si, i));
+            const pts: Pt[] = bands.map((b, i) => (b ? [xOf(i), yOf(b[1])] : null));
+            const bases: Pt[] = bands.map((b, i) => (b ? [xOf(i), yOf(b[0])] : null));
             const lastInProgress = n > 1 && data.periods[n - 1].inProgress;
-            const solid = lastInProgress ? pts.slice(0, -1) : pts;
+            const topSegs = smoothSegments(pts);
+            const solidEnd = lastInProgress ? topSegs.length - 1 : topSegs.length;
             const dimmed = focusKey !== null && focusKey !== s.key;
             return (
               <g key={s.key} opacity={dimmed ? 0.2 : 1}>
-                <path d={linePath(solid)} fill="none" stroke={color} strokeWidth={2} strokeLinejoin="round" strokeLinecap="round" />
+                <path d={areaPath(topSegs, smoothSegments(bases))} fill={color} fillOpacity={stacked ? 0.22 : 0.07} stroke="none" />
+                <path d={linePath(topSegs, 0, solidEnd)} fill="none" stroke={color} strokeWidth={2} strokeLinejoin="round" strokeLinecap="round" />
                 {lastInProgress && (
-                  <path d={linePath(pts.slice(-2))} fill="none" stroke={color} strokeWidth={2} strokeDasharray="3 3" strokeLinecap="round" />
+                  <path d={linePath(topSegs, solidEnd)} fill="none" stroke={color} strokeWidth={2} strokeDasharray="3 3" strokeLinecap="round" />
                 )}
                 {pts.map((p, i) =>
                   p && !pts[i - 1] && !pts[i + 1] ? <circle key={i} cx={p[0]} cy={p[1]} r={3} fill={color} /> : null,
@@ -353,7 +453,7 @@ export function TrendsChart({ prs, measure, onDrillDown }: Props) {
             <div className="mt-2 space-y-1 border-t border-border pt-2">
               {shown
                 .map((s, si) => ({ s, si, v: valueAt(si, hoverIdx!) }))
-                .sort((a, b) => (b.v ?? 0) - (a.v ?? 0))
+                .sort((a, b) => (stacked ? b.si - a.si : (b.v ?? 0) - (a.v ?? 0)))
                 .map(({ s, v }) => (
                   <div key={s.key} className="flex items-center justify-between gap-2 tabular-nums">
                     <span className="flex min-w-0 items-center gap-1.5 text-muted-foreground">
