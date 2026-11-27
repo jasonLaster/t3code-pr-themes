@@ -17,6 +17,7 @@ import {
   SearchIcon,
   ShapesIcon,
   TagIcon,
+  UsersIcon,
   XIcon,
 } from "lucide-react";
 import { lazy, memo, Suspense, useCallback, useDeferredValue, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
@@ -774,6 +775,13 @@ export function App() {
             Search and commands
             <Kbd className="ml-auto">⌘K</Kbd>
           </button>
+          <a
+            href="/contributors"
+            className="flex h-7 w-full cursor-default items-center gap-2 rounded-md px-2 text-[13px] text-muted-foreground hover:bg-sidebar-accent hover:text-sidebar-foreground"
+          >
+            <UsersIcon className="size-3.5" aria-hidden="true" />
+            Contributors
+          </a>
         </div>
         <nav className="flex-1 space-y-4 overflow-y-auto px-3 pb-4" aria-label="Views">
           <SavedViewsNav lists={savedViews} activeId={activeSaved?._id ?? null} open={openSaved} count={(v) => savedCounts.get(v._id) ?? 0} />
