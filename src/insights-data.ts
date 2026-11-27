@@ -288,3 +288,130 @@ export function formatPct(part: number, total: number) {
   const pct = (part / total) * 100;
   return pct < 1 ? "<1%" : `${Math.round(pct)}%`;
 }
+
+export type TrendGroup = "type" | "theme";
+export type TrendInterval = "week" | "month";
+
+export type TrendSeries = {
+  key: string;
+  label: string;
+  filterValue: string;
+  total: number;
+  values: number[];
+};
+
+export type TrendPeriod = {
+  start: number;
+  label: string;
+  shortLabel: string;
+  filterValue: string;
+  total: number;
+  /** PRs opened in the period, regardless of measure. */
+  count: number;
+  inProgress: boolean;
+};
+
+export type TrendDataset = {
+  periods: TrendPeriod[];
+  /** Every category with at least one PR in range, largest first. */
+  series: TrendSeries[];
+};
+
+const MAX_TREND_PERIODS: Record<TrendInterval, number> = { week: 52, month: 24 };
+
+function monthStartUtc(ts: number) {
+  const d = new Date(ts);
+  return Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), 1);
+}
+
+function nextPeriod(start: number, interval: TrendInterval) {
+  if (interval === "week") return start + WEEK_MS;
+  const d = new Date(start);
+  return Date.UTC(d.getUTCFullYear(), d.getUTCMonth() + 1, 1);
+}
+
+export const MAX_TREND_SERIES = 6;
+
+/** Starting series: fixes, perf and features by type; Performance plus the biggest themes by theme. */
+export function defaultTrendKeys(group: TrendGroup, series: readonly TrendSeries[]) {
+  const present = new Set(series.map((s) => s.key));
+  const preferred = (group === "type" ? ["fix", "perf", "feat"] : ["Performance"]).filter((k) => present.has(k));
+  const target = group === "type" ? 3 : 4;
+  for (const s of series) {
+    if (preferred.length >= target) break;
+    if (!preferred.includes(s.key)) preferred.push(s.key);
+  }
+  return preferred;
+}
+
+export function buildTrendData(
+  prs: readonly Pr[],
+  measure: Measure,
+  group: TrendGroup,
+  interval: TrendInterval,
+  now = Date.now(),
+): TrendDataset {
+  const startOf = interval === "week" ? mondayStartUtc : monthStartUtc;
+  let minStart = Infinity;
+  let maxStart = -Infinity;
+  for (const pr of prs) {
+    const s = startOf(Date.parse(pr.createdAt));
+    if (s < minStart) minStart = s;
+    if (s > maxStart) maxStart = s;
+  }
+  if (!Number.isFinite(minStart)) return { periods: [], series: [] };
+
+  const starts: number[] = [];
+  for (let s = minStart; s <= maxStart; s = nextPeriod(s, interval)) starts.push(s);
+  const kept = starts.slice(-MAX_TREND_PERIODS[interval]);
+  const index = new Map(kept.map((s, i) => [s, i]));
+  const currentStart = startOf(now);
+
+  const periods: TrendPeriod[] = kept.map((start) => {
+    const end = nextPeriod(start, interval) - 864e5;
+    const range = `${isoDate(start)}..${isoDate(end)}`;
+    const monthLabel = new Date(start).toLocaleDateString("en-US", { month: "short", year: "numeric", timeZone: "UTC" });
+    return {
+      start,
+      label: interval === "week" ? (formatOpenedRange(range) ?? range) : monthLabel,
+      shortLabel:
+        interval === "week"
+          ? shortDateUtc(start)
+          : new Date(start).toLocaleDateString("en-US", { month: "short", year: "2-digit", timeZone: "UTC" }),
+      filterValue: range,
+      total: 0,
+      count: 0,
+      inProgress: start === currentStart,
+    };
+  });
+
+  const map = new Map<string, TrendSeries>();
+  const ensure = (key: string, label: string, filterValue: string) => {
+    let s = map.get(key);
+    if (!s) {
+      s = { key, label, filterValue, total: 0, values: kept.map(() => 0) };
+      map.set(key, s);
+    }
+    return s;
+  };
+
+  for (const pr of prs) {
+    const i = index.get(startOf(Date.parse(pr.createdAt)));
+    if (i === undefined) continue;
+    const metric = measure === "count" ? 1 : pr.additions + pr.deletions;
+    const s =
+      group === "type"
+        ? (() => {
+            const k = (pr.kind || "other").toLowerCase();
+            return ensure(k, k, k);
+          })()
+        : ensure(pr.theme, SHORT_THEME[pr.theme] ?? pr.theme, themeSlug(pr.theme));
+    s.values[i] += metric;
+    s.total += metric;
+    periods[i].total += metric;
+    periods[i].count += 1;
+  }
+
+  const series = [...map.values()].sort((a, b) => b.total - a.total || a.label.localeCompare(b.label));
+  return { periods, series };
+}

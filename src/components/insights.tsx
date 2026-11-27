@@ -11,6 +11,7 @@ import {
   niceTicks,
   type InsightBucket,
 } from "@/insights-data";
+import { TrendsChart } from "@/components/trends";
 import { cn } from "@/lib/utils";
 import {
   MEASURE_LABEL,
@@ -429,6 +430,8 @@ export function InsightsView({
                 )}
               </div>
             </section>
+
+            <TrendsChart prs={prs} measure={measure} onDrillDown={onDrillDown} />
 
             <section className="min-w-0 flex-1" aria-label="Insights breakdown table">
               <div className="overflow-x-auto">
