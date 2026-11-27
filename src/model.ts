@@ -152,6 +152,7 @@ export type ViewMode = "list" | "insights";
 export type Measure = "count" | "lines";
 export type SliceBy = "theme" | "author" | "tier" | "type" | "opened";
 export type SegmentBy = "who" | "none";
+export type InsightsChart = "breakdown" | "trends";
 
 export const MEASURE_LABEL: Record<Measure, string> = { count: "PR count", lines: "Lines changed" };
 export const SLICE_LABEL: Record<SliceBy, string> = {
@@ -162,6 +163,7 @@ export const SLICE_LABEL: Record<SliceBy, string> = {
   opened: "Opened (by week)",
 };
 export const SEGMENT_LABEL: Record<SegmentBy, string> = { who: "Contributor", none: "None" };
+export const INSIGHTS_CHART_LABEL: Record<InsightsChart, string> = { breakdown: "Breakdown", trends: "Trends" };
 
 export function groupToSlice(group: string): SliceBy {
   if (group === "theme" || group === "type" || group === "tier" || group === "opened") return group;

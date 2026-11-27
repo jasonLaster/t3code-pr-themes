@@ -12,14 +12,17 @@ import {
   type InsightBucket,
 } from "@/insights-data";
 import { TrendsChart } from "@/components/trends";
+import { SegmentedControl, SegmentedControlIndicator, SegmentedControlItem } from "@/components/ui/segmented-control";
 import { cn } from "@/lib/utils";
 import {
+  INSIGHTS_CHART_LABEL,
   MEASURE_LABEL,
   SEGMENT_LABEL,
   SLICE_LABEL,
   WHO,
   WHO_LABEL,
   type Contributors,
+  type InsightsChart,
   type Measure,
   type SegmentBy,
   type SliceBy,
@@ -37,6 +40,8 @@ type Props = {
   setSlice: (s: SliceBy) => void;
   segment: SegmentBy;
   setSegment: (s: SegmentBy) => void;
+  chart: InsightsChart;
+  setChart: (c: InsightsChart) => void;
   hasCustomParams: boolean;
   onResetParams: () => void;
   onDrillDown: (slice: SliceBy, filterValue: string, who?: Who) => void;
@@ -89,6 +94,8 @@ export function InsightsView({
   setSlice,
   segment,
   setSegment,
+  chart,
+  setChart,
   hasCustomParams,
   onResetParams,
   onDrillDown,
@@ -120,7 +127,7 @@ export function InsightsView({
     const ro = new ResizeObserver(update);
     ro.observe(el);
     return () => ro.disconnect();
-  }, []);
+  }, [chart, data.totalCount === 0]);
 
   const segmented = segment === "who";
   const axisWidth = measure === "lines" ? 56 : 44;
@@ -173,265 +180,267 @@ export function InsightsView({
           </div>
         ) : (
           <>
-            <section className="border-b border-border px-6 pt-5 pb-4" aria-label={`${MEASURE_LABEL[measure]} by ${SLICE_LABEL[slice]}`}>
-              <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
-                <div className="flex flex-wrap items-center gap-x-4 gap-y-1.5 text-xs">
-                  {showLegend ? (
-                    data.activeWho.map((w) => {
-                      const dimmed = highlightWho !== null && highlightWho !== w;
-                      return (
-                        <button
-                          key={w}
-                          type="button"
-                          onMouseEnter={() => setHighlightWho(w)}
-                          onMouseLeave={() => setHighlightWho(null)}
-                          onClick={() => onFilterWho(w)}
-                          title={`Filter by ${WHO_LABEL[w]}`}
-                          className={cn(
-                            "flex cursor-default items-center gap-1.5 rounded px-1 py-0.5 text-muted-foreground transition-opacity hover:bg-hover hover:text-foreground",
-                            dimmed && "opacity-35",
-                          )}
-                        >
-                          <Dot who={w} />
-                          <span>{WHO_LABEL[w]}</span>
-                          <span className="text-foreground tabular-nums">{formatCompact(data.whoTotals[w])}</span>
-                        </button>
-                      );
-                    })
-                  ) : (
-                    <span className="text-muted-foreground">
-                      {MEASURE_LABEL[measure]} by {SLICE_LABEL[slice].toLowerCase()}
+            {chart === "trends" ? (
+              <TrendsChart prs={prs} measure={measure} onDrillDown={onDrillDown} />
+            ) : (
+              <section className="border-b border-border px-6 pt-5 pb-4" aria-label={`${MEASURE_LABEL[measure]} by ${SLICE_LABEL[slice]}`}>
+                <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+                  <div className="flex flex-wrap items-center gap-x-4 gap-y-1.5 text-xs">
+                    {showLegend ? (
+                      data.activeWho.map((w) => {
+                        const dimmed = highlightWho !== null && highlightWho !== w;
+                        return (
+                          <button
+                            key={w}
+                            type="button"
+                            onMouseEnter={() => setHighlightWho(w)}
+                            onMouseLeave={() => setHighlightWho(null)}
+                            onClick={() => onFilterWho(w)}
+                            title={`Filter by ${WHO_LABEL[w]}`}
+                            className={cn(
+                              "flex cursor-default items-center gap-1.5 rounded px-1 py-0.5 text-muted-foreground transition-opacity hover:bg-hover hover:text-foreground",
+                              dimmed && "opacity-35",
+                            )}
+                          >
+                            <Dot who={w} />
+                            <span>{WHO_LABEL[w]}</span>
+                            <span className="text-foreground tabular-nums">{formatCompact(data.whoTotals[w])}</span>
+                          </button>
+                        );
+                      })
+                    ) : (
+                      <span className="text-muted-foreground">
+                        {MEASURE_LABEL[measure]} by {SLICE_LABEL[slice].toLowerCase()}
+                      </span>
+                    )}
+                  </div>
+                  {data.truncatedAuthors > 0 && (
+                    <span className="text-xs text-muted-foreground tabular-nums">
+                      Top {chartBuckets.length} of {fmt(data.buckets.length)} authors
                     </span>
                   )}
                 </div>
-                {data.truncatedAuthors > 0 && (
-                  <span className="text-xs text-muted-foreground tabular-nums">
-                    Top {chartBuckets.length} of {fmt(data.buckets.length)} authors
-                  </span>
-                )}
-              </div>
 
-              <div ref={chartBoxRef} className="relative select-none" onMouseLeave={() => setHover(null)}>
-                <svg
-                  width={chartWidth}
-                  height={TOP_PAD + PLOT_HEIGHT + (slice === "author" ? 6 : 28)}
-                  className="block overflow-visible"
-                  role="img"
-                  aria-label={`Bar chart of ${MEASURE_LABEL[measure]} sliced by ${SLICE_LABEL[slice]}`}
-                >
-                  {ticks.map((tick) => {
-                    const y = Math.round(yOf(tick)) + 0.5;
-                    return (
-                      <g key={tick}>
-                        <line
-                          x1={LEFT_PAD}
-                          x2={LEFT_PAD + plotWidth}
-                          y1={y}
-                          y2={y}
-                          stroke="var(--border)"
-                          strokeWidth={1}
-                          strokeDasharray={tick === 0 ? undefined : "2 3"}
-                        />
-                        <text
-                          x={LEFT_PAD + plotWidth + 10}
-                          y={y + 3.5}
-                          fill="var(--muted-foreground)"
-                          fontSize={11}
-                          style={{ fontVariantNumeric: "tabular-nums" }}
-                        >
-                          {formatCompact(tick)}
-                        </text>
-                      </g>
-                    );
-                  })}
-
-                  {chartBuckets.map((bucket, idx) => {
-                    const slotX = LEFT_PAD + idx * slotWidth;
-                    const barX = slotX + (slotWidth - barWidth) / 2;
-                    const isHovered = hover?.key === bucket.key;
-                    const nonZeroSegments = segmented ? WHO.filter((w) => bucket.byWho[w] > 0) : [];
-                    const totalH = bucket.value > 0 ? Math.max(2, (bucket.value / top) * PLOT_HEIGHT) : 0;
-
-                    let cursorY = TOP_PAD + PLOT_HEIGHT;
-                    const segmentRects = segmented
-                      ? nonZeroSegments.map((w, segIdx) => {
-                          const rawH = (bucket.byWho[w] / top) * PLOT_HEIGHT;
-                          const h = Math.max(1.5, rawH);
-                          const y = cursorY - h;
-                          const gap = segIdx > 0 && h >= 3 ? 1 : 0;
-                          cursorY = y;
-                          return {
-                            who: w,
-                            y: y + (segIdx === nonZeroSegments.length - 1 ? 0 : 0),
-                            h: Math.max(1, h - gap),
-                            isTop: segIdx === nonZeroSegments.length - 1,
-                          };
-                        })
-                      : [];
-
-                    return (
-                      <g
-                        key={bucket.key}
-                        role="button"
-                        tabIndex={0}
-                        aria-label={`${bucket.label}: ${formatMetric(bucket.value, measure)} (${formatPct(bucket.value, data.totalValue)}). Press Enter to filter.`}
-                        className="cursor-default outline-none focus-visible:opacity-100"
-                        onMouseEnter={() => setHover({ key: bucket.key })}
-                        onFocus={() => setHover({ key: bucket.key })}
-                        onBlur={() => setHover(null)}
-                        onClick={() => bucket.count > 0 && onDrillDown(slice, bucket.filterValue)}
-                        onKeyDown={(e) => {
-                          if ((e.key === "Enter" || e.key === " ") && bucket.count > 0) {
-                            e.preventDefault();
-                            onDrillDown(slice, bucket.filterValue);
-                          }
-                        }}
-                      >
-                        <rect
-                          x={slotX + 1}
-                          y={TOP_PAD}
-                          width={Math.max(1, slotWidth - 2)}
-                          height={PLOT_HEIGHT}
-                          rx={4}
-                          fill={isHovered ? "var(--hover)" : "transparent"}
-                        />
-
-                        {segmented ? (
-                          segmentRects.map((seg) => {
-                            const dimmed = highlightWho !== null && highlightWho !== seg.who;
-                            const focusedSeg = isHovered && hover?.who === seg.who;
-                            return (
-                              <path
-                                key={seg.who}
-                                d={
-                                  seg.isTop
-                                    ? topRoundedRectPath(barX, seg.y, barWidth, seg.h, 2)
-                                    : `M${barX},${seg.y}h${barWidth}v${seg.h}h${-barWidth}Z`
-                                }
-                                fill={`var(--${seg.who})`}
-                                opacity={dimmed ? 0.18 : hover?.who && isHovered && !focusedSeg ? 0.65 : 1}
-                                onMouseEnter={(e) => {
-                                  e.stopPropagation();
-                                  setHover({ key: bucket.key, who: seg.who });
-                                }}
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  onDrillDown(slice, bucket.filterValue, seg.who);
-                                }}
-                              />
-                            );
-                          })
-                        ) : totalH > 0 ? (
-                          <path
-                            d={topRoundedRectPath(barX, TOP_PAD + PLOT_HEIGHT - totalH, barWidth, totalH, 2)}
-                            fill="var(--primary)"
-                            opacity={hover && !isHovered ? 0.55 : 1}
-                          />
-                        ) : null}
-
-                        {slice !== "author" && (idx % labelStep === 0 || (showLastLabel && idx === chartBuckets.length - 1)) && (
-                          <text
-                            x={slotX + slotWidth / 2}
-                            y={TOP_PAD + PLOT_HEIGHT + 18}
-                            textAnchor="middle"
-                            fill={isHovered ? "var(--foreground)" : "var(--muted-foreground)"}
-                            fontSize={11}
-                          >
-                            {slotWidth < 52 && bucket.shortLabel.length > 7
-                              ? `${bucket.shortLabel.slice(0, 6)}…`
-                              : bucket.shortLabel}
-                          </text>
-                        )}
-                      </g>
-                    );
-                  })}
-                </svg>
-
-                {slice === "author" && (
-                  <div className="relative h-7" style={{ marginLeft: LEFT_PAD, width: plotWidth }}>
-                    {chartBuckets.map((bucket, idx) => {
-                      const isHovered = hover?.key === bucket.key;
+                <div ref={chartBoxRef} className="relative select-none" onMouseLeave={() => setHover(null)}>
+                  <svg
+                    width={chartWidth}
+                    height={TOP_PAD + PLOT_HEIGHT + (slice === "author" ? 6 : 28)}
+                    className="block overflow-visible"
+                    role="img"
+                    aria-label={`Bar chart of ${MEASURE_LABEL[measure]} sliced by ${SLICE_LABEL[slice]}`}
+                  >
+                    {ticks.map((tick) => {
+                      const y = Math.round(yOf(tick)) + 0.5;
                       return (
-                        <button
-                          key={bucket.key}
-                          type="button"
-                          onMouseEnter={() => setHover({ key: bucket.key })}
-                          onClick={() => onDrillDown(slice, bucket.filterValue)}
-                          aria-label={`Filter by ${bucket.label}`}
-                          title={bucket.label}
-                          style={{ left: `${((idx + 0.5) / chartBuckets.length) * 100}%` }}
-                          className={cn(
-                            "absolute top-1 -translate-x-1/2 cursor-default rounded-full p-0.5 transition-transform",
-                            isHovered && "ring-2 ring-ring/70",
-                          )}
-                        >
-                          <Avatar login={bucket.avatar ?? bucket.label} className={slotWidth >= 26 ? "size-[18px]" : "size-3.5"} />
-                        </button>
+                        <g key={tick}>
+                          <line
+                            x1={LEFT_PAD}
+                            x2={LEFT_PAD + plotWidth}
+                            y1={y}
+                            y2={y}
+                            stroke="var(--border)"
+                            strokeWidth={1}
+                            strokeDasharray={tick === 0 ? undefined : "2 3"}
+                          />
+                          <text
+                            x={LEFT_PAD + plotWidth + 10}
+                            y={y + 3.5}
+                            fill="var(--muted-foreground)"
+                            fontSize={11}
+                            style={{ fontVariantNumeric: "tabular-nums" }}
+                          >
+                            {formatCompact(tick)}
+                          </text>
+                        </g>
                       );
                     })}
-                  </div>
-                )}
 
-                {hoveredBucket && (
-                  <div
-                    role="status"
-                    style={{ left: tooltipLeft, top: 8 }}
-                    className="pointer-events-none absolute z-20 w-[228px] rounded-lg border border-border bg-popover p-2.5 text-xs text-popover-foreground shadow-lg"
-                  >
-                    <div className="flex items-center justify-between gap-2">
-                      <span className="flex min-w-0 items-center gap-1.5 font-[590]">
-                        {hoveredBucket.avatar && <Avatar login={hoveredBucket.avatar} className="size-4" />}
-                        <span className="truncate">{hoveredBucket.label}</span>
-                      </span>
-                      <span className="shrink-0 text-muted-foreground tabular-nums">
-                        {formatPct(hoveredBucket.value, data.totalValue)}
-                      </span>
-                    </div>
-                    <div className="mt-1 flex items-baseline justify-between gap-2 tabular-nums">
-                      <span className="text-[13px] font-[590]">{formatMetric(hoveredBucket.value, measure)}</span>
-                      <span className="text-[11px] text-muted-foreground">
-                        {measure === "count"
-                          ? `${formatCompact(hoveredBucket.lines)} lines`
-                          : `${fmt(hoveredBucket.count)} ${hoveredBucket.count === 1 ? "PR" : "PRs"}`}
-                      </span>
-                    </div>
-                    {segmented && hoveredBucket.value > 0 && (
-                      <div className="mt-2 space-y-1 border-t border-border pt-2">
-                        {WHO.filter((w) => hoveredBucket.byWho[w] > 0).map((w) => (
-                          <div
-                            key={w}
+                    {chartBuckets.map((bucket, idx) => {
+                      const slotX = LEFT_PAD + idx * slotWidth;
+                      const barX = slotX + (slotWidth - barWidth) / 2;
+                      const isHovered = hover?.key === bucket.key;
+                      const nonZeroSegments = segmented ? WHO.filter((w) => bucket.byWho[w] > 0) : [];
+                      const totalH = bucket.value > 0 ? Math.max(2, (bucket.value / top) * PLOT_HEIGHT) : 0;
+
+                      let cursorY = TOP_PAD + PLOT_HEIGHT;
+                      const segmentRects = segmented
+                        ? nonZeroSegments.map((w, segIdx) => {
+                            const rawH = (bucket.byWho[w] / top) * PLOT_HEIGHT;
+                            const h = Math.max(1.5, rawH);
+                            const y = cursorY - h;
+                            const gap = segIdx > 0 && h >= 3 ? 1 : 0;
+                            cursorY = y;
+                            return {
+                              who: w,
+                              y: y + (segIdx === nonZeroSegments.length - 1 ? 0 : 0),
+                              h: Math.max(1, h - gap),
+                              isTop: segIdx === nonZeroSegments.length - 1,
+                            };
+                          })
+                        : [];
+
+                      return (
+                        <g
+                          key={bucket.key}
+                          role="button"
+                          tabIndex={0}
+                          aria-label={`${bucket.label}: ${formatMetric(bucket.value, measure)} (${formatPct(bucket.value, data.totalValue)}). Press Enter to filter.`}
+                          className="cursor-default outline-none focus-visible:opacity-100"
+                          onMouseEnter={() => setHover({ key: bucket.key })}
+                          onFocus={() => setHover({ key: bucket.key })}
+                          onBlur={() => setHover(null)}
+                          onClick={() => bucket.count > 0 && onDrillDown(slice, bucket.filterValue)}
+                          onKeyDown={(e) => {
+                            if ((e.key === "Enter" || e.key === " ") && bucket.count > 0) {
+                              e.preventDefault();
+                              onDrillDown(slice, bucket.filterValue);
+                            }
+                          }}
+                        >
+                          <rect
+                            x={slotX + 1}
+                            y={TOP_PAD}
+                            width={Math.max(1, slotWidth - 2)}
+                            height={PLOT_HEIGHT}
+                            rx={4}
+                            fill={isHovered ? "var(--hover)" : "transparent"}
+                          />
+
+                          {segmented ? (
+                            segmentRects.map((seg) => {
+                              const dimmed = highlightWho !== null && highlightWho !== seg.who;
+                              const focusedSeg = isHovered && hover?.who === seg.who;
+                              return (
+                                <path
+                                  key={seg.who}
+                                  d={
+                                    seg.isTop
+                                      ? topRoundedRectPath(barX, seg.y, barWidth, seg.h, 2)
+                                      : `M${barX},${seg.y}h${barWidth}v${seg.h}h${-barWidth}Z`
+                                  }
+                                  fill={`var(--${seg.who})`}
+                                  opacity={dimmed ? 0.18 : hover?.who && isHovered && !focusedSeg ? 0.65 : 1}
+                                  onMouseEnter={(e) => {
+                                    e.stopPropagation();
+                                    setHover({ key: bucket.key, who: seg.who });
+                                  }}
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    onDrillDown(slice, bucket.filterValue, seg.who);
+                                  }}
+                                />
+                              );
+                            })
+                          ) : totalH > 0 ? (
+                            <path
+                              d={topRoundedRectPath(barX, TOP_PAD + PLOT_HEIGHT - totalH, barWidth, totalH, 2)}
+                              fill="var(--primary)"
+                              opacity={hover && !isHovered ? 0.55 : 1}
+                            />
+                          ) : null}
+
+                          {slice !== "author" && (idx % labelStep === 0 || (showLastLabel && idx === chartBuckets.length - 1)) && (
+                            <text
+                              x={slotX + slotWidth / 2}
+                              y={TOP_PAD + PLOT_HEIGHT + 18}
+                              textAnchor="middle"
+                              fill={isHovered ? "var(--foreground)" : "var(--muted-foreground)"}
+                              fontSize={11}
+                            >
+                              {slotWidth < 52 && bucket.shortLabel.length > 7
+                                ? `${bucket.shortLabel.slice(0, 6)}…`
+                                : bucket.shortLabel}
+                            </text>
+                          )}
+                        </g>
+                      );
+                    })}
+                  </svg>
+
+                  {slice === "author" && (
+                    <div className="relative h-7" style={{ marginLeft: LEFT_PAD, width: plotWidth }}>
+                      {chartBuckets.map((bucket, idx) => {
+                        const isHovered = hover?.key === bucket.key;
+                        return (
+                          <button
+                            key={bucket.key}
+                            type="button"
+                            onMouseEnter={() => setHover({ key: bucket.key })}
+                            onClick={() => onDrillDown(slice, bucket.filterValue)}
+                            aria-label={`Filter by ${bucket.label}`}
+                            title={bucket.label}
+                            style={{ left: `${((idx + 0.5) / chartBuckets.length) * 100}%` }}
                             className={cn(
-                              "flex items-center justify-between gap-2 rounded px-1 py-0.5 tabular-nums",
-                              hover?.who === w && "bg-accent text-accent-foreground",
+                              "absolute top-1 -translate-x-1/2 cursor-default rounded-full p-0.5 transition-transform",
+                              isHovered && "ring-2 ring-ring/70",
                             )}
                           >
-                            <span className="flex items-center gap-1.5 text-muted-foreground">
-                              <Dot who={w} />
-                              <span className={hover?.who === w ? "text-foreground" : undefined}>{WHO_LABEL[w]}</span>
-                            </span>
-                            <span className="font-[510]">
-                              {fmt(hoveredBucket.byWho[w])}{" "}
-                              <span className="font-normal text-muted-foreground">
-                                ({formatPct(hoveredBucket.byWho[w], hoveredBucket.value)})
-                              </span>
-                            </span>
-                          </div>
-                        ))}
-                      </div>
-                    )}
-                    <div className="mt-2 border-t border-border pt-1.5 text-[11px] text-muted-foreground">
-                      {hoveredBucket.count === 0
-                        ? "No pull requests in this week"
-                        : hover?.who
-                          ? `Click to filter ${hoveredBucket.shortLabel} · ${WHO_SHORT[hover.who]}`
-                          : "Click to view matching pull requests"}
+                            <Avatar login={bucket.avatar ?? bucket.label} className={slotWidth >= 26 ? "size-[18px]" : "size-3.5"} />
+                          </button>
+                        );
+                      })}
                     </div>
-                  </div>
-                )}
-              </div>
-            </section>
+                  )}
 
-            <TrendsChart prs={prs} measure={measure} onDrillDown={onDrillDown} />
+                  {hoveredBucket && (
+                    <div
+                      role="status"
+                      style={{ left: tooltipLeft, top: 8 }}
+                      className="pointer-events-none absolute z-20 w-[228px] rounded-lg border border-border bg-popover p-2.5 text-xs text-popover-foreground shadow-lg"
+                    >
+                      <div className="flex items-center justify-between gap-2">
+                        <span className="flex min-w-0 items-center gap-1.5 font-[590]">
+                          {hoveredBucket.avatar && <Avatar login={hoveredBucket.avatar} className="size-4" />}
+                          <span className="truncate">{hoveredBucket.label}</span>
+                        </span>
+                        <span className="shrink-0 text-muted-foreground tabular-nums">
+                          {formatPct(hoveredBucket.value, data.totalValue)}
+                        </span>
+                      </div>
+                      <div className="mt-1 flex items-baseline justify-between gap-2 tabular-nums">
+                        <span className="text-[13px] font-[590]">{formatMetric(hoveredBucket.value, measure)}</span>
+                        <span className="text-[11px] text-muted-foreground">
+                          {measure === "count"
+                            ? `${formatCompact(hoveredBucket.lines)} lines`
+                            : `${fmt(hoveredBucket.count)} ${hoveredBucket.count === 1 ? "PR" : "PRs"}`}
+                        </span>
+                      </div>
+                      {segmented && hoveredBucket.value > 0 && (
+                        <div className="mt-2 space-y-1 border-t border-border pt-2">
+                          {WHO.filter((w) => hoveredBucket.byWho[w] > 0).map((w) => (
+                            <div
+                              key={w}
+                              className={cn(
+                                "flex items-center justify-between gap-2 rounded px-1 py-0.5 tabular-nums",
+                                hover?.who === w && "bg-accent text-accent-foreground",
+                              )}
+                            >
+                              <span className="flex items-center gap-1.5 text-muted-foreground">
+                                <Dot who={w} />
+                                <span className={hover?.who === w ? "text-foreground" : undefined}>{WHO_LABEL[w]}</span>
+                              </span>
+                              <span className="font-[510]">
+                                {fmt(hoveredBucket.byWho[w])}{" "}
+                                <span className="font-normal text-muted-foreground">
+                                  ({formatPct(hoveredBucket.byWho[w], hoveredBucket.value)})
+                                </span>
+                              </span>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                      <div className="mt-2 border-t border-border pt-1.5 text-[11px] text-muted-foreground">
+                        {hoveredBucket.count === 0
+                          ? "No pull requests in this week"
+                          : hover?.who
+                            ? `Click to filter ${hoveredBucket.shortLabel} · ${WHO_SHORT[hover.who]}`
+                            : "Click to view matching pull requests"}
+                      </div>
+                    </div>
+                  )}
+                </div>
+              </section>
+            )}
 
             <section className="min-w-0 flex-1" aria-label="Insights breakdown table">
               <div className="overflow-x-auto">
@@ -568,7 +577,26 @@ export function InsightsView({
           )}
         </div>
 
-        <div className="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-3 lg:grid-cols-1">
+        <div className="mt-4 space-y-1">
+          <div id="insights-chart-label" className="text-xs text-muted-foreground">
+            Chart
+          </div>
+          <SegmentedControl
+            value={chart}
+            onValueChange={(v) => v && setChart(v as InsightsChart)}
+            aria-labelledby="insights-chart-label"
+            className="flex w-full"
+          >
+            <SegmentedControlIndicator />
+            {(Object.keys(INSIGHTS_CHART_LABEL) as InsightsChart[]).map((c) => (
+              <SegmentedControlItem key={c} value={c} className="flex-1">
+                {INSIGHTS_CHART_LABEL[c]}
+              </SegmentedControlItem>
+            ))}
+          </SegmentedControl>
+        </div>
+
+        <div className="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-3 lg:grid-cols-1">
           <Select items={measureItems} value={measure} onValueChange={(v) => v && setMeasure(v as Measure)}>
             <div className="space-y-1">
               <SelectLabel className="block text-xs text-muted-foreground">Measure</SelectLabel>
@@ -601,21 +629,23 @@ export function InsightsView({
             </SelectContent>
           </Select>
 
-          <Select items={segmentItems} value={segment} onValueChange={(v) => v && setSegment(v as SegmentBy)}>
-            <div className="space-y-1">
-              <SelectLabel className="block text-xs text-muted-foreground">Segment</SelectLabel>
-              <SelectTrigger className="w-full">
-                <SelectValue />
-              </SelectTrigger>
-            </div>
-            <SelectContent>
-              {segmentItems.map((i) => (
-                <SelectItem key={i.value} value={i.value}>
-                  {i.label}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
+          {chart === "breakdown" && (
+            <Select items={segmentItems} value={segment} onValueChange={(v) => v && setSegment(v as SegmentBy)}>
+              <div className="space-y-1">
+                <SelectLabel className="block text-xs text-muted-foreground">Segment</SelectLabel>
+                <SelectTrigger className="w-full">
+                  <SelectValue />
+                </SelectTrigger>
+              </div>
+              <SelectContent>
+                {segmentItems.map((i) => (
+                  <SelectItem key={i.value} value={i.value}>
+                    {i.label}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          )}
         </div>
 
         {segmented && data.totalValue > 0 && (

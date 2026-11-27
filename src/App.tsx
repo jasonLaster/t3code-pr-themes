@@ -49,6 +49,7 @@ import { useColumns, useResizable, type Column } from "@/lib/layout";
 import { Avatar, Dot, STATE_LABEL, TierBadge, aliasOf } from "@/components/people";
 import { FIELDS, filterOptions, groupOptions, groupPrs, isGroupKey, type Ctx, type Group } from "@/fields";
 import {
+  INSIGHTS_CHART_LABEL,
   MEASURE_LABEL,
   SEGMENT_LABEL,
   SLICE_LABEL,
@@ -62,6 +63,7 @@ import {
   tierOf,
   whoOf,
   type Contributors,
+  type InsightsChart,
   type Measure,
   type SegmentBy,
   type SliceBy,
@@ -128,6 +130,7 @@ function readUrl() {
   const measure = p.get("measure") as Measure | null;
   const slice = p.get("slice") as SliceBy | null;
   const segment = p.get("segment") as SegmentBy | null;
+  const chart = p.get("chart") as InsightsChart | null;
   const pr = Number(p.get("pr"));
   return {
     q: p.get("q") ?? "",
@@ -137,6 +140,7 @@ function readUrl() {
     measure: measure && Object.hasOwn(MEASURE_LABEL, measure) ? measure : ("count" as Measure),
     slice: slice && Object.hasOwn(SLICE_LABEL, slice) ? slice : null,
     segment: segment && Object.hasOwn(SEGMENT_LABEL, segment) ? segment : ("who" as SegmentBy),
+    chart: chart && Object.hasOwn(INSIGHTS_CHART_LABEL, chart) ? chart : ("breakdown" as InsightsChart),
     pr: Number.isFinite(pr) && pr > 0 ? pr : null,
   };
 }
@@ -332,6 +336,7 @@ export function App() {
   const [measure, setMeasure] = useState<Measure>(initial.measure);
   const [explicitSlice, setExplicitSlice] = useState<SliceBy | null>(initial.slice);
   const [segment, setSegment] = useState<SegmentBy>(initial.segment);
+  const [chart, setChart] = useState<InsightsChart>(initial.chart);
   const [pane, setPane] = useState<number | null>(initial.pr);
   const [desktopPane, setDesktopPane] = useState(() => matchMedia("(min-width: 48rem)").matches);
   useEffect(() => {
@@ -430,6 +435,7 @@ export function App() {
       setMeasure(u.measure);
       setExplicitSlice(u.slice);
       setSegment(u.segment);
+      setChart(u.chart);
       setPane(u.pr);
       if (u.pr) setSelected(u.pr);
     };
@@ -447,6 +453,7 @@ export function App() {
       if (measure !== "count") p.set("measure", measure);
       if (explicitSlice) p.set("slice", explicitSlice);
       if (segment !== "who") p.set("segment", segment);
+      if (chart !== "breakdown") p.set("chart", chart);
     }
     if (pane) p.set("pr", String(pane));
     // This effect runs before ConvexAuthProvider's, so keep the OAuth callback params for it to
@@ -462,7 +469,7 @@ export function App() {
     if (next === `${location.pathname}${location.search}`) return;
     if (mode === "push") history.pushState(null, "", next);
     else history.replaceState(null, "", next);
-  }, [q, group, sort, view, measure, explicitSlice, segment, pane]);
+  }, [q, group, sort, view, measure, explicitSlice, segment, chart, pane]);
 
   const contributors: Contributors = useMemo(
     () => new Map((contributorList ?? []).map((c) => [c.login, { tier: c.tier, reason: c.reason }])),
@@ -961,6 +968,8 @@ export function App() {
                     setSlice={setExplicitSlice}
                     segment={segment}
                     setSegment={setSegment}
+                    chart={chart}
+                    setChart={setChart}
                     hasCustomParams={measure !== "count" || explicitSlice !== null || segment !== "who"}
                     onResetParams={() => {
                       setMeasure("count");
