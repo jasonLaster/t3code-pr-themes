@@ -6,24 +6,29 @@ import { api } from "../convex/_generated/api";
 import { App } from "@/App";
 import "./index.css";
 
-// The contributors page is static data, so it skips Convex and loads on its own chunk.
+// The contributors and marketing pages are static data, so they skip Convex and load on their own chunks.
 const ContributorsPage = lazy(() => import("@/components/contributors").then((m) => ({ default: m.ContributorsPage })));
-const isContributors = /^\/contributors\/?$/.test(location.pathname);
+const MarketingPage = lazy(() => import("@/components/marketing").then((m) => ({ default: m.MarketingPage })));
+const StaticPage = /^\/contributors\/?$/.test(location.pathname)
+  ? ContributorsPage
+  : /^\/marketing\/?$/.test(location.pathname)
+    ? MarketingPage
+    : null;
 
-const convex = isContributors ? null : new ConvexReactClient(import.meta.env.VITE_CONVEX_URL);
+const convex = StaticPage ? null : new ConvexReactClient(import.meta.env.VITE_CONVEX_URL);
 
 createRoot(document.getElementById("root")!).render(
   <StrictMode>
-    {convex ? (
+    {!StaticPage ? (
       <ConvexAuthProvider
-        client={convex}
+        client={convex!}
         api={{ refreshSession: api.auth.refreshSession, signOut: api.auth.signOut, isAuthenticated: api.auth.isAuthenticated }}
       >
         <App />
       </ConvexAuthProvider>
     ) : (
       <Suspense fallback={null}>
-        <ContributorsPage />
+        <StaticPage />
       </Suspense>
     )}
   </StrictMode>,

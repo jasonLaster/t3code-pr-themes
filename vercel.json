@@ -7,8 +7,12 @@
       "destination": "/index.html"
     },
     {
-      "source": "/marketing/agent-setup-and-workspace",
-      "destination": "/marketing/agent-setup-and-workspace/index.html"
+      "source": "/marketing",
+      "destination": "/index.html"
+    },
+    {
+      "source": "/marketing/:slug",
+      "destination": "/marketing/:slug/index.html"
     }
   ]
 }
