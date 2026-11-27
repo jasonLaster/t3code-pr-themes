@@ -13,6 +13,7 @@ import {
   LayersIcon,
   ListFilterIcon,
   ListIcon,
+  MegaphoneIcon,
   MessageSquareIcon,
   SearchIcon,
   ShapesIcon,
@@ -788,6 +789,13 @@ export function App() {
           >
             <UsersIcon className="size-3.5" aria-hidden="true" />
             Contributors
+          </a>
+          <a
+            href="/marketing"
+            className="flex h-7 w-full cursor-default items-center gap-2 rounded-md px-2 text-[13px] text-muted-foreground hover:bg-sidebar-accent hover:text-sidebar-foreground"
+          >
+            <MegaphoneIcon className="size-3.5" aria-hidden="true" />
+            Marketing
           </a>
         </div>
         <nav className="flex-1 space-y-4 overflow-y-auto px-3 pb-4" aria-label="Views">
