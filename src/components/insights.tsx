@@ -19,6 +19,10 @@ import {
   MEASURE_LABEL,
   SEGMENT_LABEL,
   SLICE_LABEL,
+  TREND_GROUP_LABEL,
+  TREND_INTERVAL_LABEL,
+  TREND_SCALE_LABEL,
+  TREND_STYLE_LABEL,
   WHO,
   WHO_LABEL,
   type Contributors,
@@ -27,6 +31,10 @@ import {
   type SegmentBy,
   type SliceBy,
   type Tier,
+  type TrendGroup,
+  type TrendInterval,
+  type TrendScale,
+  type TrendStyle,
   type Who,
 } from "@/model";
 import type { Pr } from "@/sync";
@@ -42,6 +50,8 @@ type Props = {
   setSegment: (s: SegmentBy) => void;
   chart: InsightsChart;
   setChart: (c: InsightsChart) => void;
+  trend: TrendOptions;
+  setTrend: (patch: Partial<TrendOptions>) => void;
   hasCustomParams: boolean;
   onResetParams: () => void;
   onDrillDown: (slice: SliceBy, filterValue: string, who?: Who) => void;
@@ -50,7 +60,41 @@ type Props = {
   hasFilters: boolean;
 };
 
+export type TrendOptions = { group: TrendGroup; interval: TrendInterval; style: TrendStyle; scale: TrendScale };
+
 const fmt = (n: number) => n.toLocaleString();
+const trendGroupItems = (Object.keys(TREND_GROUP_LABEL) as TrendGroup[]).map((value) => ({ value, label: TREND_GROUP_LABEL[value] }));
+
+/** A labeled, full-width segmented control for the parameters sidebar. */
+function OptionToggle<T extends string>({
+  id,
+  label,
+  value,
+  labels,
+  onChange,
+}: {
+  id: string;
+  label: string;
+  value: T;
+  labels: Record<T, string>;
+  onChange: (v: T) => void;
+}) {
+  return (
+    <div className="space-y-1">
+      <div id={id} className="text-xs text-muted-foreground">
+        {label}
+      </div>
+      <SegmentedControl value={value} onValueChange={(v) => v && onChange(v as T)} aria-labelledby={id} className="flex w-full">
+        <SegmentedControlIndicator />
+        {(Object.keys(labels) as T[]).map((k) => (
+          <SegmentedControlItem key={k} value={k} className="flex-1">
+            {labels[k]}
+          </SegmentedControlItem>
+        ))}
+      </SegmentedControl>
+    </div>
+  );
+}
 const measureItems = (Object.keys(MEASURE_LABEL) as Measure[]).map((value) => ({ value, label: MEASURE_LABEL[value] }));
 const sliceItems = (Object.keys(SLICE_LABEL) as SliceBy[]).map((value) => ({ value, label: SLICE_LABEL[value] }));
 const segmentItems = (Object.keys(SEGMENT_LABEL) as SegmentBy[]).map((value) => ({ value, label: SEGMENT_LABEL[value] }));
@@ -96,6 +140,8 @@ export function InsightsView({
   setSegment,
   chart,
   setChart,
+  trend,
+  setTrend,
   hasCustomParams,
   onResetParams,
   onDrillDown,
@@ -181,7 +227,16 @@ export function InsightsView({
         ) : (
           <>
             {chart === "trends" ? (
-              <TrendsChart prs={prs} measure={measure} onDrillDown={onDrillDown} />
+              <TrendsChart
+                prs={prs}
+                contributors={contributors}
+                measure={measure}
+                group={trend.group}
+                interval={trend.interval}
+                chartStyle={trend.style}
+                scale={trend.scale}
+                onDrillDown={onDrillDown}
+              />
             ) : (
               <section className="border-b border-border px-6 pt-5 pb-4" aria-label={`${MEASURE_LABEL[measure]} by ${SLICE_LABEL[slice]}`}>
                 <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
@@ -442,6 +497,7 @@ export function InsightsView({
               </section>
             )}
 
+            {chart === "breakdown" && (
             <section className="min-w-0 flex-1" aria-label="Insights breakdown table">
               <div className="overflow-x-auto">
                 <table className="w-full border-collapse text-[13px]">
@@ -544,6 +600,7 @@ export function InsightsView({
                 </div>
               )}
             </section>
+            )}
           </>
         )}
       </div>
@@ -577,23 +634,8 @@ export function InsightsView({
           )}
         </div>
 
-        <div className="mt-4 space-y-1">
-          <div id="insights-chart-label" className="text-xs text-muted-foreground">
-            Chart
-          </div>
-          <SegmentedControl
-            value={chart}
-            onValueChange={(v) => v && setChart(v as InsightsChart)}
-            aria-labelledby="insights-chart-label"
-            className="flex w-full"
-          >
-            <SegmentedControlIndicator />
-            {(Object.keys(INSIGHTS_CHART_LABEL) as InsightsChart[]).map((c) => (
-              <SegmentedControlItem key={c} value={c} className="flex-1">
-                {INSIGHTS_CHART_LABEL[c]}
-              </SegmentedControlItem>
-            ))}
-          </SegmentedControl>
+        <div className="mt-4">
+          <OptionToggle id="insights-chart-label" label="Chart" value={chart} labels={INSIGHTS_CHART_LABEL} onChange={setChart} />
         </div>
 
         <div className="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-3 lg:grid-cols-1">
@@ -613,6 +655,15 @@ export function InsightsView({
             </SelectContent>
           </Select>
 
+          {chart === "trends" ? (
+            <OptionToggle
+              id="insights-interval-label"
+              label="Slice by opened"
+              value={trend.interval}
+              labels={TREND_INTERVAL_LABEL}
+              onChange={(interval) => setTrend({ interval })}
+            />
+          ) : (
           <Select items={sliceItems} value={slice} onValueChange={(v) => v && setSlice(v as SliceBy)}>
             <div className="space-y-1">
               <SelectLabel className="block text-xs text-muted-foreground">Slice</SelectLabel>
@@ -628,8 +679,25 @@ export function InsightsView({
               ))}
             </SelectContent>
           </Select>
+          )}
 
-          {chart === "breakdown" && (
+          {chart === "trends" ? (
+            <Select items={trendGroupItems} value={trend.group} onValueChange={(v) => v && setTrend({ group: v as TrendGroup })}>
+              <div className="space-y-1">
+                <SelectLabel className="block text-xs text-muted-foreground">Segment</SelectLabel>
+                <SelectTrigger className="w-full">
+                  <SelectValue />
+                </SelectTrigger>
+              </div>
+              <SelectContent>
+                {trendGroupItems.map((i) => (
+                  <SelectItem key={i.value} value={i.value}>
+                    {i.label}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          ) : (
             <Select items={segmentItems} value={segment} onValueChange={(v) => v && setSegment(v as SegmentBy)}>
               <div className="space-y-1">
                 <SelectLabel className="block text-xs text-muted-foreground">Segment</SelectLabel>
@@ -648,7 +716,27 @@ export function InsightsView({
           )}
         </div>
 
-        {segmented && data.totalValue > 0 && (
+        {chart === "trends" && (
+          <div className="mt-4 space-y-3 border-t border-border pt-4">
+            <div className="text-xs font-[510] text-foreground">Display</div>
+            <OptionToggle
+              id="insights-style-label"
+              label="Chart type"
+              value={trend.style}
+              labels={TREND_STYLE_LABEL}
+              onChange={(style) => setTrend({ style })}
+            />
+            <OptionToggle
+              id="insights-scale-label"
+              label="Values"
+              value={trend.scale}
+              labels={TREND_SCALE_LABEL}
+              onChange={(scale) => setTrend({ scale })}
+            />
+          </div>
+        )}
+
+        {chart === "breakdown" && segmented && data.totalValue > 0 && (
           <div className="mt-5 hidden border-t border-border pt-4 lg:block">
             <div className="mb-2 text-xs text-muted-foreground">Contributor mix</div>
             <div className="mb-3 flex h-1.5 gap-0.5 overflow-hidden rounded-full bg-muted">

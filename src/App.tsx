@@ -56,6 +56,10 @@ import {
   SORTERS,
   SORT_LABEL,
   THEMES,
+  TREND_GROUP_LABEL,
+  TREND_INTERVAL_LABEL,
+  TREND_SCALE_LABEL,
+  TREND_STYLE_LABEL,
   groupToSlice,
   mergeOf,
   stateOf,
@@ -69,9 +73,14 @@ import {
   type SliceBy,
   type SortBy,
   type Tier,
+  type TrendGroup,
+  type TrendInterval,
+  type TrendScale,
+  type TrendStyle,
   type ViewMode,
   type Who,
 } from "@/model";
+import type { TrendOptions } from "@/components/insights";
 import {
   applyInsightDrillDown,
   applyWhoFilter,
@@ -122,6 +131,10 @@ function useNow() {
   return now;
 }
 
+const DEFAULT_TREND: TrendOptions = { group: "type", interval: "week", style: "stacked", scale: "value" };
+const pick = <T extends string>(value: string | null, labels: Record<T, string>, fallback: T): T =>
+  value !== null && Object.hasOwn(labels, value) ? (value as T) : fallback;
+
 function readUrl() {
   const p = new URLSearchParams(location.search);
   const group = p.get("group");
@@ -142,6 +155,12 @@ function readUrl() {
     segment: segment && Object.hasOwn(SEGMENT_LABEL, segment) ? segment : ("who" as SegmentBy),
     chart: chart && Object.hasOwn(INSIGHTS_CHART_LABEL, chart) ? chart : ("breakdown" as InsightsChart),
     pr: Number.isFinite(pr) && pr > 0 ? pr : null,
+    trend: {
+      group: pick<TrendGroup>(p.get("tsegment"), TREND_GROUP_LABEL, DEFAULT_TREND.group),
+      interval: pick<TrendInterval>(p.get("interval"), TREND_INTERVAL_LABEL, DEFAULT_TREND.interval),
+      style: pick<TrendStyle>(p.get("style"), TREND_STYLE_LABEL, DEFAULT_TREND.style),
+      scale: pick<TrendScale>(p.get("scale"), TREND_SCALE_LABEL, DEFAULT_TREND.scale),
+    } satisfies TrendOptions,
   };
 }
 
@@ -337,6 +356,8 @@ export function App() {
   const [explicitSlice, setExplicitSlice] = useState<SliceBy | null>(initial.slice);
   const [segment, setSegment] = useState<SegmentBy>(initial.segment);
   const [chart, setChart] = useState<InsightsChart>(initial.chart);
+  const [trend, setTrendState] = useState<TrendOptions>(initial.trend);
+  const setTrend = useCallback((patch: Partial<TrendOptions>) => setTrendState((cur) => ({ ...cur, ...patch })), []);
   const [pane, setPane] = useState<number | null>(initial.pr);
   const [desktopPane, setDesktopPane] = useState(() => matchMedia("(min-width: 48rem)").matches);
   useEffect(() => {
@@ -436,6 +457,7 @@ export function App() {
       setExplicitSlice(u.slice);
       setSegment(u.segment);
       setChart(u.chart);
+      setTrendState(u.trend);
       setPane(u.pr);
       if (u.pr) setSelected(u.pr);
     };
@@ -454,6 +476,12 @@ export function App() {
       if (explicitSlice) p.set("slice", explicitSlice);
       if (segment !== "who") p.set("segment", segment);
       if (chart !== "breakdown") p.set("chart", chart);
+      if (chart === "trends") {
+        if (trend.group !== DEFAULT_TREND.group) p.set("tsegment", trend.group);
+        if (trend.interval !== DEFAULT_TREND.interval) p.set("interval", trend.interval);
+        if (trend.style !== DEFAULT_TREND.style) p.set("style", trend.style);
+        if (trend.scale !== DEFAULT_TREND.scale) p.set("scale", trend.scale);
+      }
     }
     if (pane) p.set("pr", String(pane));
     // This effect runs before ConvexAuthProvider's, so keep the OAuth callback params for it to
@@ -469,7 +497,7 @@ export function App() {
     if (next === `${location.pathname}${location.search}`) return;
     if (mode === "push") history.pushState(null, "", next);
     else history.replaceState(null, "", next);
-  }, [q, group, sort, view, measure, explicitSlice, segment, chart, pane]);
+  }, [q, group, sort, view, measure, explicitSlice, segment, chart, trend, pane]);
 
   const contributors: Contributors = useMemo(
     () => new Map((contributorList ?? []).map((c) => [c.login, { tier: c.tier, reason: c.reason }])),
@@ -970,11 +998,22 @@ export function App() {
                     setSegment={setSegment}
                     chart={chart}
                     setChart={setChart}
-                    hasCustomParams={measure !== "count" || explicitSlice !== null || segment !== "who"}
+                    trend={trend}
+                    setTrend={setTrend}
+                    hasCustomParams={
+                      measure !== "count" ||
+                      (chart === "breakdown"
+                        ? explicitSlice !== null || segment !== "who"
+                        : (Object.keys(DEFAULT_TREND) as (keyof TrendOptions)[]).some((k) => trend[k] !== DEFAULT_TREND[k]))
+                    }
                     onResetParams={() => {
                       setMeasure("count");
-                      setExplicitSlice(null);
-                      setSegment("who");
+                      if (chart === "breakdown") {
+                        setExplicitSlice(null);
+                        setSegment("who");
+                      } else {
+                        setTrendState(DEFAULT_TREND);
+                      }
                     }}
                     onDrillDown={drillDown}
                     onFilterWho={filterByWho}

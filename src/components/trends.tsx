@@ -1,27 +1,41 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { SegmentedControl, SegmentedControlIndicator, SegmentedControlItem } from "@/components/ui/segmented-control";
+import { Button } from "@/components/ui/button";
 import {
   MAX_TREND_SERIES,
   buildTrendData,
   defaultTrendKeys,
   formatCompact,
   niceTicks,
-  type TrendGroup,
-  type TrendInterval,
+  type TrendSeries,
 } from "@/insights-data";
 import { cn } from "@/lib/utils";
-import type { Measure, SliceBy } from "@/model";
+import {
+  TREND_GROUP_LABEL,
+  type Contributors,
+  type Measure,
+  type SliceBy,
+  type TrendGroup,
+  type TrendInterval,
+  type TrendScale,
+  type TrendStyle,
+  type Who,
+} from "@/model";
 import type { Pr } from "@/sync";
 
-type Scale = "value" | "share";
-type ChartStyle = "stacked" | "lines";
 type SeriesPick = { key: string; slot: number };
 
 type Props = {
   prs: readonly Pr[];
+  contributors: Contributors;
   measure: Measure;
-  onDrillDown: (slice: SliceBy, filterValue: string) => void;
+  group: TrendGroup;
+  interval: TrendInterval;
+  chartStyle: TrendStyle;
+  scale: TrendScale;
+  onDrillDown: (slice: SliceBy, filterValue: string, who?: Who) => void;
 };
+
+const GROUP_SLICE: Record<TrendGroup, SliceBy> = { type: "type", theme: "theme", who: "tier" };
 
 const PLOT_HEIGHT = 200;
 const TOP_PAD = 10;
@@ -31,6 +45,7 @@ const LABEL_GAP = 13;
 const MIN_SHARE_PRS = 5;
 
 const slotColor = (slot: number) => `var(--series-${slot + 1})`;
+const seriesColor = (s: TrendSeries, slot: number | undefined) => s.color ?? slotColor(slot ?? 0);
 const fmt = (n: number) => n.toLocaleString();
 
 type Pt = [x: number, y: number] | null;
@@ -140,15 +155,15 @@ function spreadLabels(ys: number[], min: number, max: number) {
   return out;
 }
 
-export function TrendsChart({ prs, measure, onDrillDown }: Props) {
-  const [group, setGroup] = useState<TrendGroup>("type");
-  const [interval, setIntervalUnit] = useState<TrendInterval>("week");
-  const [scale, setScale] = useState<Scale>("value");
-  const [chartStyle, setChartStyle] = useState<ChartStyle>("stacked");
-  const data = useMemo(() => buildTrendData(prs, measure, group, interval), [prs, measure, group, interval]);
+export function TrendsChart({ prs, contributors, measure, group, interval, chartStyle, scale, onDrillDown }: Props) {
+  const data = useMemo(
+    () => buildTrendData(prs, measure, group, interval, Date.now(), contributors),
+    [prs, measure, group, interval, contributors],
+  );
   const [picks, setPicks] = useState<SeriesPick[] | null>(null);
   const [hoverIdx, setHoverIdx] = useState<number | null>(null);
   const [focusKey, setFocusKey] = useState<string | null>(null);
+  const [showAllPeriods, setShowAllPeriods] = useState(false);
   const boxRef = useRef<HTMLDivElement>(null);
   const [width, setWidth] = useState(760);
 
@@ -263,41 +278,33 @@ export function TrendsChart({ prs, measure, onDrillDown }: Props) {
         : Math.max(4, xOf(hoverIdx) - 12 - tooltipW);
   const measureNoun = measure === "count" ? "PRs" : "lines";
 
+  // Drill into a period, narrowed to one series when a cell is clicked.
+  const drill = (periodIdx: number, s?: TrendSeries) => {
+    const p = data.periods[periodIdx];
+    if (!p || p.total === 0) return;
+    if (s && group === "who") return onDrillDown("opened", p.filterValue, s.key as Who);
+    onDrillDown("opened", p.filterValue);
+    if (s) onDrillDown(GROUP_SLICE[group], s.filterValue);
+  };
+
   if (n === 0) return null;
 
+  const tableOrder = data.periods.map((_, i) => n - 1 - i);
+  const TABLE_ROWS = 12;
+  const tableRows = showAllPeriods ? tableOrder : tableOrder.slice(0, TABLE_ROWS);
+
   return (
+    <>
     <section className="border-b border-border px-6 pt-5 pb-4" aria-label="Trends over time">
-      <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
-        <div>
-          <h2 className="text-[13px] font-[590]">Trends over time</h2>
-          <p className="text-xs text-muted-foreground">
-            {scale === "share" ? `Share of each ${interval}'s ${measureNoun}` : `${measure === "count" ? "PRs opened" : "Lines changed"} per ${interval}`}
-            {" by "}
-            {group}
-          </p>
-        </div>
-        <div className="flex flex-wrap items-center gap-2">
-          <SegmentedControl value={chartStyle} onValueChange={(v) => v && setChartStyle(v as ChartStyle)} aria-label="Chart style">
-            <SegmentedControlIndicator />
-            <SegmentedControlItem value="stacked">Stacked</SegmentedControlItem>
-            <SegmentedControlItem value="lines">Lines</SegmentedControlItem>
-          </SegmentedControl>
-          <SegmentedControl value={group} onValueChange={(v) => v && setGroup(v as TrendGroup)} aria-label="Group trends by">
-            <SegmentedControlIndicator />
-            <SegmentedControlItem value="type">Type</SegmentedControlItem>
-            <SegmentedControlItem value="theme">Theme</SegmentedControlItem>
-          </SegmentedControl>
-          <SegmentedControl value={interval} onValueChange={(v) => v && setIntervalUnit(v as TrendInterval)} aria-label="Trend interval">
-            <SegmentedControlIndicator />
-            <SegmentedControlItem value="week">Weekly</SegmentedControlItem>
-            <SegmentedControlItem value="month">Monthly</SegmentedControlItem>
-          </SegmentedControl>
-          <SegmentedControl value={scale} onValueChange={(v) => v && setScale(v as Scale)} aria-label="Trend scale">
-            <SegmentedControlIndicator />
-            <SegmentedControlItem value="value">{measure === "count" ? "Count" : "Lines"}</SegmentedControlItem>
-            <SegmentedControlItem value="share">Share</SegmentedControlItem>
-          </SegmentedControl>
-        </div>
+      <div className="mb-3">
+        <h2 className="text-[13px] font-[590]">
+          {scale === "share" ? `Share of ${measureNoun}` : measure === "count" ? "PRs opened" : "Lines changed"} by{" "}
+          {TREND_GROUP_LABEL[group].toLowerCase()}, per {interval}
+        </h2>
+        <p className="text-xs text-muted-foreground">
+          {data.periods[0].label} – {data.periods[n - 1].label}
+          {data.periods[n - 1].inProgress && ` · current ${interval} so far`}
+        </p>
       </div>
 
       <div className="mb-3 flex flex-wrap gap-1.5" role="group" aria-label="Series">
@@ -323,7 +330,7 @@ export function TrendsChart({ prs, measure, onDrillDown }: Props) {
               <span
                 aria-hidden="true"
                 className="inline-block size-2 shrink-0 rounded-full"
-                style={on ? { background: slotColor(slot) } : { boxShadow: "inset 0 0 0 1px var(--muted-foreground)" }}
+                style={on ? { background: seriesColor(s, slot) } : { boxShadow: "inset 0 0 0 1px var(--muted-foreground)" }}
               />
               <span>{s.label}</span>
               <span className="text-muted-foreground tabular-nums">{formatCompact(s.total)}</span>
@@ -393,7 +400,7 @@ export function TrendsChart({ prs, measure, onDrillDown }: Props) {
           )}
 
           {shown.map((s, si) => {
-            const color = slotColor(slotOf.get(s.key) ?? 0);
+            const color = seriesColor(s, slotOf.get(s.key));
             const bands = data.periods.map((_, i) => bandAt(si, i));
             const pts: Pt[] = bands.map((b, i) => (b ? [xOf(i), yOf(b[1])] : null));
             const bases: Pt[] = bands.map((b, i) => (b ? [xOf(i), yOf(b[0])] : null));
@@ -457,7 +464,7 @@ export function TrendsChart({ prs, measure, onDrillDown }: Props) {
                 .map(({ s, v }) => (
                   <div key={s.key} className="flex items-center justify-between gap-2 tabular-nums">
                     <span className="flex min-w-0 items-center gap-1.5 text-muted-foreground">
-                      <span aria-hidden="true" className="inline-block size-2 shrink-0 rounded-full" style={{ background: slotColor(slotOf.get(s.key) ?? 0) }} />
+                      <span aria-hidden="true" className="inline-block size-2 shrink-0 rounded-full" style={{ background: seriesColor(s, slotOf.get(s.key)) }} />
                       <span className="truncate">{s.label}</span>
                     </span>
                     <span className="font-[510]">{v === null ? "—" : fmtVal(v)}</span>
@@ -478,5 +485,85 @@ export function TrendsChart({ prs, measure, onDrillDown }: Props) {
         )}
       </div>
     </section>
+
+    <section className="min-w-0 flex-1" aria-label="Trends table">
+      <div className="overflow-x-auto">
+        <table className="w-full border-collapse text-[13px]">
+          <thead className="sticky top-0 z-10 bg-group text-xs text-muted-foreground">
+            <tr className="h-9 border-b border-border">
+              <th className="px-6 text-left font-medium">{interval === "week" ? "Week" : "Month"}</th>
+              {shown.map((s) => (
+                <th key={s.key} className="px-3 text-right font-medium">
+                  <span
+                    className="inline-flex items-center gap-1.5"
+                    onMouseEnter={() => setFocusKey(s.key)}
+                    onMouseLeave={() => setFocusKey(null)}
+                  >
+                    <span aria-hidden="true" className="inline-block size-2 shrink-0 rounded-full" style={{ background: seriesColor(s, slotOf.get(s.key)) }} />
+                    <span className="max-w-24 truncate">{s.label}</span>
+                  </span>
+                </th>
+              ))}
+              <th className="px-3 text-right font-medium tabular-nums">All {measureNoun}</th>
+            </tr>
+          </thead>
+          <tbody>
+            {tableRows.map((i) => {
+              const p = data.periods[i];
+              const clickable = p.total > 0;
+              return (
+                <tr
+                  key={p.start}
+                  onMouseEnter={() => setHoverIdx(i)}
+                  onMouseLeave={() => setHoverIdx(null)}
+                  className={cn("h-9 border-b border-border/60 transition-colors", hoverIdx === i && "bg-hover", !clickable && "text-muted-foreground/60")}
+                >
+                  <td className="px-6">
+                    <button
+                      type="button"
+                      disabled={!clickable}
+                      onClick={() => drill(i)}
+                      className="flex cursor-default items-center gap-2 text-left font-[450] hover:text-foreground disabled:pointer-events-none"
+                    >
+                      <span className="truncate">{p.label}</span>
+                      {p.inProgress && <span className="text-[11px] text-muted-foreground">so far</span>}
+                    </button>
+                  </td>
+                  {shown.map((s, si) => {
+                    const raw = s.values[i];
+                    const v = valueAt(si, i);
+                    return (
+                      <td key={s.key} className="px-3 text-right tabular-nums">
+                        {raw > 0 && v !== null ? (
+                          <button
+                            type="button"
+                            onClick={() => drill(i, s)}
+                            title={`View ${s.label} pull requests from ${p.label}`}
+                            className="cursor-default rounded px-1.5 py-0.5 text-muted-foreground hover:bg-accent hover:text-foreground"
+                          >
+                            {scale === "share" ? fmtVal(v) : fmt(v)}
+                          </button>
+                        ) : (
+                          <span className="px-1.5 text-muted-foreground/35">{v === null ? "—" : "0"}</span>
+                        )}
+                      </td>
+                    );
+                  })}
+                  <td className="px-3 text-right font-[510] tabular-nums">{fmt(p.total)}</td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+      {n > TABLE_ROWS && (
+        <div className="flex justify-center border-b border-border/60 py-2.5">
+          <Button variant="ghost" size="sm" onClick={() => setShowAllPeriods((v) => !v)}>
+            {showAllPeriods ? `Show last ${TABLE_ROWS} ${interval}s` : `Show all ${n} ${interval}s`}
+          </Button>
+        </div>
+      )}
+    </section>
+    </>
   );
 }

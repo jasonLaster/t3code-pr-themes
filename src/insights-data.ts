@@ -11,6 +11,8 @@ import {
   type Measure,
   type SliceBy,
   type Tier,
+  type TrendGroup,
+  type TrendInterval,
   type Who,
 } from "@/model";
 import type { Pr } from "@/sync";
@@ -289,8 +291,7 @@ export function formatPct(part: number, total: number) {
   return pct < 1 ? "<1%" : `${Math.round(pct)}%`;
 }
 
-export type TrendGroup = "type" | "theme";
-export type TrendInterval = "week" | "month";
+export type { TrendGroup, TrendInterval };
 
 export type TrendSeries = {
   key: string;
@@ -298,6 +299,8 @@ export type TrendSeries = {
   filterValue: string;
   total: number;
   values: number[];
+  /** Fixed color for categories that have one (contributors); others take a series slot. */
+  color?: string;
 };
 
 export type TrendPeriod = {
@@ -332,8 +335,9 @@ function nextPeriod(start: number, interval: TrendInterval) {
 
 export const MAX_TREND_SERIES = 6;
 
-/** Starting series: fixes, perf and features by type; Performance plus the biggest themes by theme. */
+/** Starting series: fixes, perf and features by type; Performance plus the biggest themes by theme; every contributor group. */
 export function defaultTrendKeys(group: TrendGroup, series: readonly TrendSeries[]) {
+  if (group === "who") return series.slice(0, MAX_TREND_SERIES).map((s) => s.key);
   const present = new Set(series.map((s) => s.key));
   const preferred = (group === "type" ? ["fix", "perf", "feat"] : ["Performance"]).filter((k) => present.has(k));
   const target = group === "type" ? 3 : 4;
@@ -350,6 +354,7 @@ export function buildTrendData(
   group: TrendGroup,
   interval: TrendInterval,
   now = Date.now(),
+  contributors: Contributors = new Map(),
 ): TrendDataset {
   const startOf = interval === "week" ? mondayStartUtc : monthStartUtc;
   let minStart = Infinity;
@@ -386,10 +391,10 @@ export function buildTrendData(
   });
 
   const map = new Map<string, TrendSeries>();
-  const ensure = (key: string, label: string, filterValue: string) => {
+  const ensure = (key: string, label: string, filterValue: string, color?: string) => {
     let s = map.get(key);
     if (!s) {
-      s = { key, label, filterValue, total: 0, values: kept.map(() => 0) };
+      s = { key, label, filterValue, total: 0, values: kept.map(() => 0), ...(color ? { color } : {}) };
       map.set(key, s);
     }
     return s;
@@ -399,19 +404,25 @@ export function buildTrendData(
     const i = index.get(startOf(Date.parse(pr.createdAt)));
     if (i === undefined) continue;
     const metric = measure === "count" ? 1 : pr.additions + pr.deletions;
-    const s =
-      group === "type"
-        ? (() => {
-            const k = (pr.kind || "other").toLowerCase();
-            return ensure(k, k, k);
-          })()
-        : ensure(pr.theme, SHORT_THEME[pr.theme] ?? pr.theme, themeSlug(pr.theme));
+    let s: TrendSeries;
+    if (group === "type") {
+      const k = (pr.kind || "other").toLowerCase();
+      s = ensure(k, k, k);
+    } else if (group === "who") {
+      const w = whoOf(pr.author, contributors);
+      s = ensure(w, WHO_SHORT[w], w, `var(--${w})`);
+    } else {
+      s = ensure(pr.theme, SHORT_THEME[pr.theme] ?? pr.theme, themeSlug(pr.theme));
+    }
     s.values[i] += metric;
     s.total += metric;
     periods[i].total += metric;
     periods[i].count += 1;
   }
 
-  const series = [...map.values()].sort((a, b) => b.total - a.total || a.label.localeCompare(b.label));
+  const series =
+    group === "who"
+      ? WHO.flatMap((w) => map.get(w) ?? [])
+      : [...map.values()].sort((a, b) => b.total - a.total || a.label.localeCompare(b.label));
   return { periods, series };
 }

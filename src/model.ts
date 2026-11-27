@@ -165,6 +165,15 @@ export const SLICE_LABEL: Record<SliceBy, string> = {
 export const SEGMENT_LABEL: Record<SegmentBy, string> = { who: "Contributor", none: "None" };
 export const INSIGHTS_CHART_LABEL: Record<InsightsChart, string> = { breakdown: "Breakdown", trends: "Trends" };
 
+export type TrendGroup = "type" | "theme" | "who";
+export type TrendInterval = "week" | "month";
+export type TrendStyle = "stacked" | "lines";
+export type TrendScale = "value" | "share";
+export const TREND_GROUP_LABEL: Record<TrendGroup, string> = { type: "Type", theme: "Theme", who: "Contributor" };
+export const TREND_INTERVAL_LABEL: Record<TrendInterval, string> = { week: "Week", month: "Month" };
+export const TREND_STYLE_LABEL: Record<TrendStyle, string> = { stacked: "Stacked", lines: "Lines" };
+export const TREND_SCALE_LABEL: Record<TrendScale, string> = { value: "Total", share: "Percent" };
+
 export function groupToSlice(group: string): SliceBy {
   if (group === "theme" || group === "type" || group === "tier" || group === "opened") return group;
   if (group === "who") return "tier";

@@ -43,4 +43,15 @@ describe("buildTrendData", () => {
     const byTheme = buildTrendData(prs, "count", "theme", "week", now);
     expect(defaultTrendKeys("theme", byTheme.series)).toEqual(["Performance", "Mobile"]);
   });
+
+  test("segments by contributor in contributor order, with fixed colors", () => {
+    const contributors = new Map([["someone", { tier: "maintainer" as const, reason: "" }]]);
+    const mixed = [...prs, { ...prs[0], author: "stranger" } as Pr];
+    const d = buildTrendData(mixed, "count", "who", "month", now, contributors);
+    expect(d.series.map((s) => [s.key, s.total, s.color])).toEqual([
+      ["maintainer", 5, "var(--maintainer)"],
+      ["community", 1, "var(--community)"],
+    ]);
+    expect(defaultTrendKeys("who", d.series)).toEqual(["maintainer", "community"]);
+  });
 });
