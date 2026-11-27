@@ -3,6 +3,10 @@
   "framework": "vite",
   "rewrites": [
     {
+      "source": "/contributors",
+      "destination": "/index.html"
+    },
+    {
       "source": "/marketing/agent-setup-and-workspace",
       "destination": "/marketing/agent-setup-and-workspace/index.html"
     }
